@@ -1,0 +1,25 @@
+{
+  "id": "ml-ja-161",
+  "text": "店舗住所: 東京都新宿区西新宿 2-8-1",
+  "lang": "ja",
+  "lang_review_status": "human_curated",
+  "eval_role": "heldout_human_eval",
+  "expected_findings": [
+    {
+      "label": "address",
+      "start": 14,
+      "end": 47,
+      "extracted_text": "東京都新宿区西新宿 2-8-1",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ja-address-only-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Han",
+    "category": "address_only"
+  }
+}

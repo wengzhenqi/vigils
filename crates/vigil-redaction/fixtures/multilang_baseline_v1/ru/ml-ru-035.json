@@ -1,0 +1,25 @@
+{
+  "id": "ml-ru-035",
+  "text": "Адрес магазина: Новосибирск, Красный пр., 17",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "address",
+      "start": 29,
+      "end": 77,
+      "extracted_text": "Новосибирск, Красный пр., 17",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-address-only-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "address_only"
+  }
+}

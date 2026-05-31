@@ -1,0 +1,33 @@
+{
+  "id": "ml-ru-160",
+  "text": "Дата встречи: 24.06.2023, участник: Мария Смирнова",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "date",
+      "start": 25,
+      "end": 35,
+      "extracted_text": "24.06.2023",
+      "risk_tier": "low",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "person",
+      "start": 55,
+      "end": 82,
+      "extracted_text": "Мария Смирнова",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-date-name-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "date_with_person"
+  }
+}

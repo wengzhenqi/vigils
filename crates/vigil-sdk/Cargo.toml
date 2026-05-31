@@ -1,0 +1,28 @@
+[package]
+name = "vigil-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Stable public SDK facade for embedding Vigil's local AI safety runtime — typed decisions/audit + firewall execution + redaction scanning"
+readme = "README.md"
+keywords = ["vigil", "ai-safety", "sdk", "embedding", "control-plane"]
+categories = ["api-bindings", "authentication"]
+
+[lints]
+workspace = true
+
+[features]
+# v0.8 Sprint 4 P3.1 — opt-in ORT 工厂入口(ensemble 多模型路径)。
+# 启用后 SDK 暴露 `ort_ensemble_scanner_arc_from_env` 给企业 release runner 用。
+# 默认关闭 — SDK default-safe path(NoopEngine + Hard rules)不依赖 ORT runtime。
+ort = ["vigil-firewall/ort", "vigil-redaction/ort"]
+
+[dependencies]
+# Stable SDK re-exports;path-dep,locked to workspace version
+vigil-types = { path = "../vigil-types" }
+vigil-firewall = { path = "../vigil-firewall" }
+vigil-redaction = { path = "../vigil-redaction" }
+vigil-mcp = { path = "../vigil-mcp" }

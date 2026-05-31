@@ -1,0 +1,1372 @@
+[
+  {
+    "id": "S01",
+    "category": "soft",
+    "lang": "en",
+    "text": "John Smith works here.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 10
+      }
+    ]
+  },
+  {
+    "id": "S02",
+    "category": "soft",
+    "lang": "en",
+    "text": "Please contact Alice at the office.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 15,
+        "end": 20
+      }
+    ]
+  },
+  {
+    "id": "S03",
+    "category": "soft",
+    "lang": "en",
+    "text": "Maria Garcia called yesterday.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 12
+      }
+    ]
+  },
+  {
+    "id": "S04",
+    "category": "soft",
+    "lang": "en",
+    "text": "Send email to alice@example.com please.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 14,
+        "end": 31
+      }
+    ]
+  },
+  {
+    "id": "S05",
+    "category": "soft",
+    "lang": "en",
+    "text": "Email john.doe@acme.org for support.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 6,
+        "end": 23
+      }
+    ]
+  },
+  {
+    "id": "S06",
+    "category": "soft",
+    "lang": "en",
+    "text": "Contact: support@example.io",
+    "truth": [
+      {
+        "label": "email",
+        "start": 9,
+        "end": 27
+      }
+    ]
+  },
+  {
+    "id": "S07",
+    "category": "soft",
+    "lang": "en",
+    "text": "Call me at +1 (555) 123-4567 today.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 11,
+        "end": 28
+      }
+    ]
+  },
+  {
+    "id": "S08",
+    "category": "soft",
+    "lang": "en",
+    "text": "Phone: 415-555-0199 (mobile)",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 7,
+        "end": 19
+      }
+    ]
+  },
+  {
+    "id": "S09",
+    "category": "soft",
+    "lang": "en",
+    "text": "Reach out: +44 20 7946 0958 anytime.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 11,
+        "end": 27
+      }
+    ]
+  },
+  {
+    "id": "S10",
+    "category": "soft",
+    "lang": "en",
+    "text": "Mailing: 742 Evergreen Terrace, Springfield",
+    "truth": [
+      {
+        "label": "address",
+        "start": 9,
+        "end": 43
+      }
+    ]
+  },
+  {
+    "id": "S11",
+    "category": "soft",
+    "lang": "en",
+    "text": "Send package to 88 Oak Street, Riverside, California.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 16,
+        "end": 51
+      }
+    ]
+  },
+  {
+    "id": "S12",
+    "category": "soft",
+    "lang": "en",
+    "text": "Born on 1990-01-02 in our records.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 8,
+        "end": 18
+      }
+    ]
+  },
+  {
+    "id": "S13",
+    "category": "soft",
+    "lang": "en",
+    "text": "Meeting scheduled for 2026-05-15.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 22,
+        "end": 32
+      }
+    ]
+  },
+  {
+    "id": "S14",
+    "category": "soft",
+    "lang": "en",
+    "text": "Joined the team on March 15, 2020.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 19,
+        "end": 33
+      }
+    ]
+  },
+  {
+    "id": "S15",
+    "category": "soft",
+    "lang": "en",
+    "text": "Visit https://internal.private/dashboard later.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 6,
+        "end": 40
+      }
+    ]
+  },
+  {
+    "id": "S16",
+    "category": "soft",
+    "lang": "en",
+    "text": "API at https://api.example.com/v1/users",
+    "truth": [
+      {
+        "label": "url",
+        "start": 7,
+        "end": 39
+      }
+    ]
+  },
+  {
+    "id": "S17",
+    "category": "soft",
+    "lang": "en",
+    "text": "Bank account: 1234567890123456 verified.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 14,
+        "end": 30
+      }
+    ]
+  },
+  {
+    "id": "S18",
+    "category": "soft",
+    "lang": "en",
+    "text": "SSN ending 0987654321 on file.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 11,
+        "end": 21
+      }
+    ]
+  },
+  {
+    "id": "S19",
+    "category": "hard",
+    "lang": "en",
+    "text": "Token: ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA in CI.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 7,
+        "end": 51
+      }
+    ]
+  },
+  {
+    "id": "S20",
+    "category": "clean",
+    "lang": "en",
+    "text": "The weather is nice today and we plan to walk.",
+    "truth": []
+  },
+  {
+    "id": "S21",
+    "category": "multilang-soft",
+    "lang": "zh",
+    "text": "请联系王小明处理订单。",
+    "truth": [
+      {
+        "label": "person",
+        "start": 9,
+        "end": 18
+      }
+    ]
+  },
+  {
+    "id": "S22",
+    "category": "multilang-soft",
+    "lang": "zh",
+    "text": "他的邮箱是 zhang.wei@example.cn 请使用。",
+    "truth": [
+      {
+        "label": "email",
+        "start": 16,
+        "end": 36
+      }
+    ]
+  },
+  {
+    "id": "S23",
+    "category": "multilang-soft",
+    "lang": "ja",
+    "text": "田中太郎さんが昨日来ました。",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 12
+      }
+    ]
+  },
+  {
+    "id": "S24",
+    "category": "multilang-soft",
+    "lang": "ja",
+    "text": "電話は 03-1234-5678 までお願いします。",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 10,
+        "end": 22
+      }
+    ]
+  },
+  {
+    "id": "S25",
+    "category": "multilang-soft",
+    "lang": "ko",
+    "text": "김민수 씨에게 연락하세요.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 9
+      }
+    ]
+  },
+  {
+    "id": "S26",
+    "category": "multilang-soft",
+    "lang": "ko",
+    "text": "메일: park.jisoo@example.kr 로 보내주세요.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 8,
+        "end": 29
+      }
+    ]
+  },
+  {
+    "id": "S27",
+    "category": "multilang-soft",
+    "lang": "zh",
+    "text": "请将文件寄到北京市朝阳区建国路100号。",
+    "truth": [
+      {
+        "label": "address",
+        "start": 18,
+        "end": 51
+      }
+    ]
+  },
+  {
+    "id": "S28",
+    "category": "multilang-soft",
+    "lang": "ja",
+    "text": "配送先は東京都渋谷区桜丘町2-15です。",
+    "truth": [
+      {
+        "label": "address",
+        "start": 12,
+        "end": 43
+      }
+    ]
+  },
+  {
+    "id": "S29",
+    "category": "multilang-soft",
+    "lang": "ko",
+    "text": "서울특별시 강남구 테헤란로 152번지로 보내주세요.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 0,
+        "end": 48
+      }
+    ]
+  },
+  {
+    "id": "S30",
+    "category": "multilang-soft",
+    "lang": "zh",
+    "text": "会议时间是2024年3月15日下午三点。",
+    "truth": [
+      {
+        "label": "date",
+        "start": 15,
+        "end": 31
+      }
+    ]
+  },
+  {
+    "id": "S31",
+    "category": "multilang-soft",
+    "lang": "ja",
+    "text": "締切は2025年12月31日です。",
+    "truth": [
+      {
+        "label": "date",
+        "start": 9,
+        "end": 26
+      }
+    ]
+  },
+  {
+    "id": "S32",
+    "category": "multilang-soft",
+    "lang": "ko",
+    "text": "회의는 2026년 4월 30일에 있습니다.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 10,
+        "end": 28
+      }
+    ]
+  },
+  {
+    "id": "S33",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Herr Schmidt arbeitet hier.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 5,
+        "end": 12
+      }
+    ]
+  },
+  {
+    "id": "S34",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Bitte kontaktiere klaus@beispiel.de bald.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 18,
+        "end": 35
+      }
+    ]
+  },
+  {
+    "id": "S35",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Telefon: 030-12345678 verfügbar.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 9,
+        "end": 21
+      }
+    ]
+  },
+  {
+    "id": "S36",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Adresse: Hauptstraße 42, Berlin.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 9,
+        "end": 24
+      }
+    ]
+  },
+  {
+    "id": "S37",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Geboren am 15. März 2026.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 11,
+        "end": 25
+      }
+    ]
+  },
+  {
+    "id": "S38",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Reisepass DE-123456789 gültig.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 10,
+        "end": 22
+      }
+    ]
+  },
+  {
+    "id": "S39",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Il signor Rossi lavora qui.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 10,
+        "end": 15
+      }
+    ]
+  },
+  {
+    "id": "S40",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Contatta marco@esempio.it presto.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 9,
+        "end": 25
+      }
+    ]
+  },
+  {
+    "id": "S41",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Telefono: 06-1234567 disponibile.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 10,
+        "end": 20
+      }
+    ]
+  },
+  {
+    "id": "S42",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Indirizzo: Via Roma 10, Milano.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 11,
+        "end": 22
+      }
+    ]
+  },
+  {
+    "id": "S43",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Nato il 20 aprile 2026.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 8,
+        "end": 22
+      }
+    ]
+  },
+  {
+    "id": "S44",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Codice fiscale RSSMRA80A01H501Z usato.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 15,
+        "end": 31
+      }
+    ]
+  },
+  {
+    "id": "S45",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Monsieur Dupont travaille ici.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 9,
+        "end": 15
+      }
+    ]
+  },
+  {
+    "id": "S46",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Veuillez contacter pierre@exemple.fr.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 19,
+        "end": 36
+      }
+    ]
+  },
+  {
+    "id": "S47",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Téléphone: 01-23-45-67-89.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 13,
+        "end": 27
+      }
+    ]
+  },
+  {
+    "id": "S48",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Adresse: 5 rue de Paris, Lyon.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 9,
+        "end": 23
+      }
+    ]
+  },
+  {
+    "id": "S49",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Né le 10 mai 2026.",
+    "truth": [
+      {
+        "label": "date",
+        "start": 7,
+        "end": 18
+      }
+    ]
+  },
+  {
+    "id": "S50",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Visitez https://www.exemple.fr/profil.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 8,
+        "end": 37
+      }
+    ]
+  },
+  {
+    "id": "S51",
+    "category": "soft",
+    "lang": "en",
+    "text": "Visit https://internal.acme.io/admin/users for setup.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 6,
+        "end": 42
+      }
+    ]
+  },
+  {
+    "id": "S52",
+    "category": "soft",
+    "lang": "en",
+    "text": "Slack hook https://hooks.slack.com/services/T01ABCDEFGH/B02IJKLMNOP/abc123def456ghi789jkl in CI.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 11,
+        "end": 89
+      }
+    ]
+  },
+  {
+    "id": "S53",
+    "category": "soft",
+    "lang": "en",
+    "text": "Order from Bob Wilson at bob@acme.org placed Mar 5 2026.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 11,
+        "end": 21
+      },
+      {
+        "label": "email",
+        "start": 25,
+        "end": 37
+      },
+      {
+        "label": "date",
+        "start": 45,
+        "end": 55
+      }
+    ]
+  },
+  {
+    "id": "S54",
+    "category": "soft",
+    "lang": "en",
+    "text": "Account 4532-1234-5678-9010 on file.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 8,
+        "end": 27
+      }
+    ]
+  },
+  {
+    "id": "S55",
+    "category": "soft",
+    "lang": "en",
+    "text": "Reach Carol at carol.lee@example.com or 555-987-6543.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 6,
+        "end": 11
+      },
+      {
+        "label": "email",
+        "start": 15,
+        "end": 36
+      },
+      {
+        "label": "phone",
+        "start": 40,
+        "end": 52
+      }
+    ]
+  },
+  {
+    "id": "S56",
+    "category": "soft",
+    "lang": "en",
+    "text": "Token sk-ant-1234567890abcdefghij1234567890 in env.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 6,
+        "end": 43
+      }
+    ]
+  },
+  {
+    "id": "S57",
+    "category": "soft",
+    "lang": "en",
+    "text": "Office at 100 Main St, Boston open Apr 1 2026.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 10,
+        "end": 21
+      },
+      {
+        "label": "date",
+        "start": 35,
+        "end": 45
+      }
+    ]
+  },
+  {
+    "id": "S58",
+    "category": "soft",
+    "lang": "en",
+    "text": "API endpoint https://api.example.com/v2/users/list now live.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 13,
+        "end": 50
+      }
+    ]
+  },
+  {
+    "id": "S59",
+    "category": "soft",
+    "lang": "en",
+    "text": "Driver license D1234567 expires 2030.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 15,
+        "end": 23
+      }
+    ]
+  },
+  {
+    "id": "S60",
+    "category": "soft",
+    "lang": "en",
+    "text": "Email frank@example.org and visit https://docs.example.org/help.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 6,
+        "end": 23
+      },
+      {
+        "label": "url",
+        "start": 34,
+        "end": 63
+      }
+    ]
+  },
+  {
+    "id": "S61",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Frau Mueller wohnt in Hamburg seit 2020.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 5,
+        "end": 12
+      },
+      {
+        "label": "address",
+        "start": 22,
+        "end": 29
+      }
+    ]
+  },
+  {
+    "id": "S62",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Email anna.weber@beispiel.de am 12. Mai 2026 senden.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 6,
+        "end": 28
+      },
+      {
+        "label": "date",
+        "start": 32,
+        "end": 44
+      }
+    ]
+  },
+  {
+    "id": "S63",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Webseite https://www.beispiel.de/profil besuchen.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 9,
+        "end": 39
+      }
+    ]
+  },
+  {
+    "id": "S64",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Konto DE89370400440532013000 verwendet.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 6,
+        "end": 28
+      }
+    ]
+  },
+  {
+    "id": "S65",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Telefon: 089-1234567 und Adresse Rosenheimer Strasse 145.",
+    "truth": [
+      {
+        "label": "phone",
+        "start": 9,
+        "end": 20
+      },
+      {
+        "label": "address",
+        "start": 33,
+        "end": 56
+      }
+    ]
+  },
+  {
+    "id": "S66",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Sig. Bianchi vive a Roma dal 2018.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 5,
+        "end": 12
+      },
+      {
+        "label": "address",
+        "start": 20,
+        "end": 24
+      }
+    ]
+  },
+  {
+    "id": "S67",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Inviare email a luca.romano@esempio.it il 15 maggio 2026.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 16,
+        "end": 38
+      },
+      {
+        "label": "date",
+        "start": 42,
+        "end": 56
+      }
+    ]
+  },
+  {
+    "id": "S68",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Visita https://www.esempio.it/profilo per dettagli.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 7,
+        "end": 37
+      }
+    ]
+  },
+  {
+    "id": "S69",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "IBAN IT60X0542811101000000123456 e telefono 02-1234567.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 5,
+        "end": 32
+      },
+      {
+        "label": "phone",
+        "start": 44,
+        "end": 54
+      }
+    ]
+  },
+  {
+    "id": "S70",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Indirizzo: Piazza Duomo 1, 20121 Milano.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 11,
+        "end": 25
+      }
+    ]
+  },
+  {
+    "id": "S71",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Mlle Martin habite a Paris depuis 2019.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 5,
+        "end": 11
+      },
+      {
+        "label": "address",
+        "start": 21,
+        "end": 26
+      }
+    ]
+  },
+  {
+    "id": "S72",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Envoyer un email a sophie.bernard@exemple.fr le 20 mai 2026.",
+    "truth": [
+      {
+        "label": "email",
+        "start": 19,
+        "end": 44
+      },
+      {
+        "label": "date",
+        "start": 48,
+        "end": 59
+      }
+    ]
+  },
+  {
+    "id": "S73",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Visitez https://www.exemple.fr/profil pour info.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 8,
+        "end": 37
+      }
+    ]
+  },
+  {
+    "id": "S74",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "IBAN FR1420041010050500013M02606 et telephone 01-23-45-67-90.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 5,
+        "end": 32
+      },
+      {
+        "label": "phone",
+        "start": 46,
+        "end": 60
+      }
+    ]
+  },
+  {
+    "id": "S75",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Adresse: 10 avenue des Champs-Elysees, Paris.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 9,
+        "end": 37
+      }
+    ]
+  },
+  {
+    "id": "S76",
+    "category": "soft",
+    "lang": "en",
+    "text": "John Doe (john@test.io, +1-202-555-0177) born 1985.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 8
+      },
+      {
+        "label": "email",
+        "start": 10,
+        "end": 22
+      },
+      {
+        "label": "phone",
+        "start": 24,
+        "end": 39
+      },
+      {
+        "label": "date",
+        "start": 46,
+        "end": 50
+      }
+    ]
+  },
+  {
+    "id": "S77",
+    "category": "soft",
+    "lang": "en",
+    "text": "Server 10.0.5.42 deployed Apr 15 2026.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 7,
+        "end": 16
+      },
+      {
+        "label": "date",
+        "start": 26,
+        "end": 37
+      }
+    ]
+  },
+  {
+    "id": "S78",
+    "category": "soft",
+    "lang": "en",
+    "text": "Stripe sk_live_abcdef123456789012345678 in payment.json.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 7,
+        "end": 39
+      }
+    ]
+  },
+  {
+    "id": "S79",
+    "category": "soft",
+    "lang": "en",
+    "text": "Order 4111-1111-1111-1111 emailed to billing@shop.com.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 6,
+        "end": 25
+      },
+      {
+        "label": "email",
+        "start": 37,
+        "end": 53
+      }
+    ]
+  },
+  {
+    "id": "S80",
+    "category": "soft",
+    "lang": "en",
+    "text": "Visit https://api.test.io and call +1 800 555 1212.",
+    "truth": [
+      {
+        "label": "url",
+        "start": 6,
+        "end": 25
+      },
+      {
+        "label": "phone",
+        "start": 35,
+        "end": 50
+      }
+    ]
+  },
+  {
+    "id": "S81",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Token ghp_DEABCDEFGHIJKLMNOPQRSTUVWXYZ12345678 bei https://gitlab.intern.de/deploy verwenden.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 6,
+        "end": 46
+      },
+      {
+        "label": "url",
+        "start": 51,
+        "end": 82
+      }
+    ]
+  },
+  {
+    "id": "S82",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "IBAN DE12500105170648489890 ist seit 2025-03-01 aktiv.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 5,
+        "end": 27
+      },
+      {
+        "label": "date",
+        "start": 37,
+        "end": 47
+      }
+    ]
+  },
+  {
+    "id": "S83",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Frau Schneider erreichbar unter +49-30-87654321 oder schneider@firma.de.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 14
+      },
+      {
+        "label": "phone",
+        "start": 32,
+        "end": 47
+      },
+      {
+        "label": "email",
+        "start": 53,
+        "end": 71
+      }
+    ]
+  },
+  {
+    "id": "S84",
+    "category": "multilang-soft",
+    "lang": "de",
+    "text": "Büro: Friedrichstraße 88, München. Online unter https://buero.firma.de erreichbar.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 7,
+        "end": 36
+      },
+      {
+        "label": "url",
+        "start": 51,
+        "end": 73
+      }
+    ]
+  },
+  {
+    "id": "S85",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Chiave sk-ant-api03-ITabcdefghijklmnopqrstuvwx in https://api.azienda.it caricata.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 7,
+        "end": 46
+      },
+      {
+        "label": "url",
+        "start": 50,
+        "end": 72
+      }
+    ]
+  },
+  {
+    "id": "S86",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Conto IT60X0542811101000000456789 aperto il 15 gennaio 2026.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 6,
+        "end": 33
+      },
+      {
+        "label": "date",
+        "start": 44,
+        "end": 59
+      }
+    ]
+  },
+  {
+    "id": "S87",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Il signor Conti è raggiungibile al 06-87654321 o sofia.conti@azienda.it.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 3,
+        "end": 15
+      },
+      {
+        "label": "phone",
+        "start": 36,
+        "end": 47
+      },
+      {
+        "label": "email",
+        "start": 50,
+        "end": 72
+      }
+    ]
+  },
+  {
+    "id": "S88",
+    "category": "multilang-soft",
+    "lang": "it",
+    "text": "Sede: Via Garibaldi 25, Napoli. Sito https://sede.azienda.it disponibile.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 6,
+        "end": 30
+      },
+      {
+        "label": "url",
+        "start": 37,
+        "end": 60
+      }
+    ]
+  },
+  {
+    "id": "S89",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Clé sk_live_FRabcdef1234567890123456789012 trouvée dans https://api.entreprise.fr/secret.",
+    "truth": [
+      {
+        "label": "secret",
+        "start": 5,
+        "end": 43
+      },
+      {
+        "label": "url",
+        "start": 58,
+        "end": 90
+      }
+    ]
+  },
+  {
+    "id": "S90",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "IBAN FR7630006000011234567890189 ouvert le 5 février 2026.",
+    "truth": [
+      {
+        "label": "account_number",
+        "start": 5,
+        "end": 32
+      },
+      {
+        "label": "date",
+        "start": 43,
+        "end": 58
+      }
+    ]
+  },
+  {
+    "id": "S91",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Mme Lefebvre disponible au 01-87-65-43-21 ou camille.lefebvre@societe.fr.",
+    "truth": [
+      {
+        "label": "person",
+        "start": 0,
+        "end": 12
+      },
+      {
+        "label": "phone",
+        "start": 27,
+        "end": 41
+      },
+      {
+        "label": "email",
+        "start": 45,
+        "end": 72
+      }
+    ]
+  },
+  {
+    "id": "S92",
+    "category": "multilang-soft",
+    "lang": "fr",
+    "text": "Bureau: 12 boulevard Haussmann, Paris. Contact: bureau@societe.fr.",
+    "truth": [
+      {
+        "label": "address",
+        "start": 8,
+        "end": 37
+      },
+      {
+        "label": "email",
+        "start": 48,
+        "end": 65
+      }
+    ]
+  }
+]

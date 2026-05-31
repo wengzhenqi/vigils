@@ -1,0 +1,25 @@
+{
+  "id": "ml-ru-138",
+  "text": "Паспорт: 1039 482364",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "account_number",
+      "start": 16,
+      "end": 27,
+      "extracted_text": "1039 482364",
+      "risk_tier": "high",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-passport-only-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "national_id_only"
+  }
+}

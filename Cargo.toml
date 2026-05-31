@@ -1,0 +1,138 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vigil-types",
+    "crates/vigil-audit",
+    "crates/vigil-policy",
+    "crates/vigil-firewall",
+    "crates/vigil-mcp",
+    "crates/vigil-lease",
+    "crates/vigil-runner",
+    "crates/vigil-runner-types",
+    "crates/vigil-redaction",
+    "crates/vigil-ui-protocol",
+    "crates/vigil-browser",
+    "crates/vigil-http-auth",
+    "crates/vigil-http-transport",
+    "crates/vigil-sandbox-linux",
+    "crates/vigil-sdk",
+    "apps/desktop",
+    "apps/native-host",
+    "apps/vigil-hub-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.80"
+license = "Apache-2.0"
+repository = "https://github.com/duncatzat/vigils"
+homepage = "https://vigils.ai"
+authors = ["Vigils Authors"]
+
+[workspace.lints.rust]
+# I00 阶段：把不允许的模式尽早固化进构建，避免后续迭代引入问题
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# 安全不变量级别：不允许 unwrap/panic 出现在运行时路径（测试代码可用）
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+
+[workspace.dependencies]
+# vigil-types 核心依赖;其他 crate 如需引用类型,应依赖 vigil-types 而非重复引入这些包
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+# I01 激活:SQLite + JCS + hash / id / time
+# rusqlite bundled:不依赖系统 libsqlite3,跨平台部署一致;backup 供 checkpoint/备份用;
+# hooks 供未来 I03 实现 approval 状态变更通知;functions 供 JSON1/FTS5 绑定
+rusqlite = { version = "0.33", features = ["bundled", "backup", "hooks", "functions"] }
+serde_jcs = "0.1"
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+regex = "1"
+once_cell = "1"
+
+# I02+I03 激活(ADR 0003)
+dunce = "1"          # Windows-friendly canonicalize
+shlex = "1"          # POSIX shell tokenizer
+url = "2"            # URL 解析
+
+# I06 激活(ADR 0006):secret value 零化 + 可选 OS keychain
+zeroize = { version = "1", features = ["zeroize_derive"] }
+keyring = { version = "3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+# I07 激活(ADR 0007):Wasm runner + WASI preopen + native spawn backend
+# v0.12 P1 audit-driven upgrade(2026-05-13):wasmtime 25 → 41+ 修 15 RUSTSEC
+# 漏洞(sandbox escape / panic / data leakage)。default-features=false 保留控制
+# 编译体积;preview1 API surface 在 25→41 稳定(Config/Engine/Linker/Module/Store
+# + WasiCtxBuilder + preopened_dir + add_to_linker_sync)。
+wasmtime = { version = "44", default-features = false, features = ["runtime", "cranelift", "wat"] }
+# v0.12.1(2026-05-14):rustc 1.95 unblock wasmtime 44.0.1+
+# - 修 RUSTSEC-2026-0114(table 超 host 地址空间 panic)— 43.0.2 不在 fix range
+# - wasi feature `p1` 保持(41 已 rename preview1→p1)
+wasmtime-wasi = { version = "44", default-features = false, features = ["p1"] }
+wasi-common = "44"
+cap-std = "3"
+
+# I08 激活(ADR 0008):CLI 参数解析
+clap = { version = "4", features = ["derive"] }
+
+# I10 激活(ADR 0010):HTTP MCP Auth(纯 OAuth 协议层;HTTP transport 延 I10b)
+# 注:oauth2 0.4 是 stable MSRV 友好版;较新版本要 reqwest 绑定
+oauth2 = { version = "4", default-features = false }
+jsonwebtoken = "9"
+base64 = "0.22"
+
+# ISS-008 Phase 1 激活(ADR 0013):Privacy Filter ONNX 推理
+# tokenizers:HuggingFace fast tokenizer(BPE/WordPiece);default-features=false 关 http,
+#   `onig` 提供 Unicode regex 支持(zh/ja/ko 分词正确性必须)
+# ndarray:ort 2.0-rc.12 `ndarray` feature 要求,Session 输入/输出走 ArrayD<f32>
+# 这两项**只在** vigil-redaction `--features ort` 下被激活,默认 0 痕迹
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+ndarray = "0.15"
+
+# I10b-α2 激活(ADR 0011 §α2-D1):真 HTTP 栈严格依赖
+#
+# **安全不变量**:
+# - `default-features = false` 禁 OpenSSL/Schannel/native-tls(跨平台分歧 + 审计链不干净)
+# - **只允许** 的 TLS feature 是 `rustls-tls`(rustls + webpki-roots);切换 TLS 走 ADR 修订
+# - 禁 `cookies` / `gzip` / `brotli` / `deflate`(远程 MCP 不需要)
+# - 启 `http2` / `json` / `blocking`(配合同步 Hub 模型)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "json", "blocking"] }
+# webpki-roots 是冻结版本的 Mozilla CA bundle;**每季度** release checklist 对照更新差异
+webpki-roots = "0.26"
+
+# I10b-β(ADR 0011 §5):跨平台打开用户默认浏览器(loopback OAuth redirect UX)。
+# `open` 是纯 Rust 封装,选 `sync` feature 避开 tokio/async;失败(WSL/headless)时
+# caller 会 fallback 打印 URL。
+open = { version = "5", default-features = false }
+
+# 真 TLS 集成测试夹具专用(仅 dev-dependencies 使用):自签证书 + 最小 hyper TLS server
+# 不进 prod 依赖树
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "logging"] }
+rustls-pemfile = "2"
+rcgen = "0.13"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+http-body-util = "0.1"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging"] }
+
+# dev-only(每个 crate 的 [dev-dependencies] 自行引用)
+tempfile = "3"
+# S1 性能基准(ASSESSMENT.md §3 BM-01/02/05);default-features=false 避 plotters 系统依赖
+criterion = { version = "0.5", default-features = false, features = ["html_reports"] }
+
+# 这些依赖后续迭代会用到,workspace 中预声明可避免 I02+ 的版本分裂
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "process"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -1,0 +1,20 @@
+[package]
+name = "vigil-policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Policy engine for Vigil — declarative ALLOW/DENY rules, OAuth scope allowlist DSL, capability levels"
+keywords = ["vigil", "policy", "authorization", "oauth"]
+categories = ["api-bindings", "authentication"]
+
+[lints]
+workspace = true
+
+[dependencies]
+vigil-types = { path = "../vigil-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,70 @@
+/**
+ * v0.14 Theme D — i18n setup(zh-CN + en-US bilingual)。
+ *
+ * 设计:
+ * - vue-i18n v9 composition mode(`legacy: false`)
+ * - 默认 locale = localStorage 'vigil-locale' 或 navigator.language 推断
+ * - fallback = 'en-US'(保证未翻译键不报错,展示英文回落)
+ * - Naive UI 自带 i18n 由 NConfigProvider :locale 设置(后续扩展;
+ *   首批仅替换 page-level 字符串,Naive UI 内置按钮文案沿用默认)
+ *
+ * 渐进迁移:
+ * - First cut(alpha.6):common + approval page 字符串
+ * - 后续:activity / sessions / servers / privacy 逐页迁
+ */
+import { createI18n } from "vue-i18n";
+import zhCN from "./locales/zh-CN.json";
+import enUS from "./locales/en-US.json";
+
+export type SupportedLocale = "zh-CN" | "en-US";
+
+const LOCALE_STORAGE_KEY = "vigil-locale";
+const SUPPORTED: SupportedLocale[] = ["zh-CN", "en-US"];
+
+function detectInitialLocale(): SupportedLocale {
+  try {
+    const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
+    if (stored && SUPPORTED.includes(stored as SupportedLocale)) {
+      return stored as SupportedLocale;
+    }
+  } catch {
+    // localStorage disabled — 用 navigator 兜底
+  }
+  // navigator.language 通常 "zh-CN" / "en-US" / "ja-JP" 等;
+  // 任何 zh-* 都映射到 zh-CN,其余回 en-US
+  const nav = (typeof navigator !== "undefined" ? navigator.language : "") || "";
+  return nav.toLowerCase().startsWith("zh") ? "zh-CN" : "en-US";
+}
+
+export const i18n = createI18n({
+  legacy: false,
+  locale: detectInitialLocale(),
+  fallbackLocale: "en-US",
+  messages: {
+    "zh-CN": zhCN,
+    "en-US": enUS,
+  },
+  // 缺键时 silent(避免 console 噪声);开发模式可打开 missing handler
+  missingWarn: false,
+  fallbackWarn: false,
+});
+
+/** 切换 locale + 持久化 */
+export function setLocale(locale: SupportedLocale): void {
+  i18n.global.locale.value = locale;
+  try {
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+  } catch {
+    // ignore
+  }
+}
+
+/** 暴露 supported list 供 toggle button */
+export const SUPPORTED_LOCALES: ReadonlyArray<{
+  code: SupportedLocale;
+  label: string;
+  short: string;
+}> = [
+  { code: "zh-CN", label: "中文", short: "中" },
+  { code: "en-US", label: "English", short: "EN" },
+];

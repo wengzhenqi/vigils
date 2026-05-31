@@ -1,0 +1,16 @@
+{
+  "id": "ml-negative-022",
+  "text": "订单编号 ORD-2024-0001234,金额 ¥199.00",
+  "lang": "zh",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [],
+  "source": "synthetic",
+  "source_template": "negative-zh-order-id-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Mixed:Han+Latin",
+    "category": "non_pii_number"
+  }
+}

@@ -1,0 +1,44 @@
+[package]
+name = "vigil-firewall"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Fail-closed effect firewall for Vigil — policy engine, approval queue, PII scanner, OAuth scope allowlist"
+keywords = ["vigil", "firewall", "policy", "ai-safety"]
+categories = ["api-bindings", "authentication"]
+
+[lints]
+workspace = true
+
+[dependencies]
+vigil-types = { path = "../vigil-types" }
+vigil-policy = { path = "../vigil-policy" }
+vigil-audit = { path = "../vigil-audit" }
+# ISS-010: T0 preflight 扫描(vigil-firewall 在 evaluate 前调 scan_text 产 PII findings)。
+# 依赖方向 T1 → T0 合法(vigil-redaction 纯函数、无反向依赖)。
+vigil-redaction = { path = "../vigil-redaction" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+url = { workspace = true }
+dunce = { workspace = true }
+shlex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+rusqlite = { workspace = true }
+
+[features]
+# ISS-008 Phase 2 T1:透传 vigil-redaction/ort,激活 OrtPiiScanner wrapper(见 preflight.rs)。
+# 默认 feature 0 ort 痕迹;cargo tree -e normal --no-default-features 守门验证。
+ort = ["vigil-redaction/ort"]

@@ -1,0 +1,33 @@
+{
+  "id": "ml-zh-122",
+  "text": "客户 王小明 居住于 北京市朝阳区建国路 88 号,请寄送货物",
+  "lang": "zh",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 7,
+      "end": 16,
+      "extracted_text": "王小明",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "address",
+      "start": 27,
+      "end": 61,
+      "extracted_text": "北京市朝阳区建国路 88 号",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "zh-name-address-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Han",
+    "category": "person_with_address"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "ml-ja-104",
+  "text": "会議日: 2023年4月5日、出席者: 伊藤美咲",
+  "lang": "ja",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "date",
+      "start": 11,
+      "end": 26,
+      "extracted_text": "2023年4月5日",
+      "risk_tier": "low",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "person",
+      "start": 40,
+      "end": 52,
+      "extracted_text": "伊藤美咲",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ja-date-name-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Han",
+    "category": "date_with_person"
+  }
+}

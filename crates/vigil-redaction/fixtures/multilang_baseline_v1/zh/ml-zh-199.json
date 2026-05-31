@@ -1,0 +1,49 @@
+{
+  "id": "ml-zh-199",
+  "text": "项目联系人:孙丽 (13800138499),陈静 (13800138224)",
+  "lang": "zh",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 16,
+      "end": 22,
+      "extracted_text": "孙丽",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 24,
+      "end": 35,
+      "extracted_text": "13800138499",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "person",
+      "start": 37,
+      "end": 43,
+      "extracted_text": "陈静",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 45,
+      "end": 56,
+      "extracted_text": "13800138224",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "zh-multi-person-phone-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Han",
+    "category": "multi_person_phone"
+  }
+}

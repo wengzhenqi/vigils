@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vigil — 选项</title>
+  <link rel="stylesheet" href="popup.css" />
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body class="options-body">
+  <header>
+    <h1>Vigil 选项</h1>
+    <span class="subtitle">配置 / 注册助手</span>
+  </header>
+
+  <section class="section">
+    <h2>扩展 ID</h2>
+    <p class="desc">
+      用这个 ID 向 Native Host 注册本扩展(<code>allowed_origins</code> 白名单)。
+    </p>
+    <div class="id-row">
+      <code id="extension-id" class="id-value">—</code>
+      <button id="copy-id-btn" type="button">复制</button>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Native Host 注册命令</h2>
+    <p class="desc">
+      在已构建 <code>vigil-native-host</code> 二进制的机器上,**一次性**运行:
+    </p>
+    <pre id="install-cmd" class="install-cmd" aria-label="install command"></pre>
+    <div class="action-row">
+      <button id="copy-cmd-btn" type="button">复制命令</button>
+      <span id="copy-cmd-hint" class="copy-hint"></span>
+    </div>
+    <details class="more">
+      <summary>其它子命令</summary>
+      <ul>
+        <li><code id="uninstall-cmd"></code> —— 卸载 Host manifest / 注册表(幂等)</li>
+        <li><code id="status-cmd"></code> —— 查当前注册状态</li>
+      </ul>
+      <p class="desc">
+        完整参考:<code>vigil-native-host --help</code>
+      </p>
+    </details>
+  </section>
+
+  <section class="section">
+    <h2>守门档位(ISS-007)</h2>
+    <p class="desc">
+      决定命中硬指纹后 Vigil 的行为。默认 <strong>balanced</strong>;
+      in-memory 会话级设置(浏览器重启恢复默认)。
+    </p>
+    <fieldset class="tier-fieldset" id="tier-fieldset">
+      <legend class="visually-hidden">tier</legend>
+      <label class="tier-row">
+        <input type="radio" name="tier" value="strict" />
+        <span class="tier-label">
+          <strong>strict</strong> — 公开 AI 网站;命中 secret 一律阻断
+        </span>
+      </label>
+      <label class="tier-row">
+        <input type="radio" name="tier" value="balanced" />
+        <span class="tier-label">
+          <strong>balanced</strong>(默认)— 脱敏后继续,最佳 UX
+        </span>
+      </label>
+      <label class="tier-row">
+        <input type="radio" name="tier" value="recall-first" />
+        <span class="tier-label">
+          <strong>recall-first</strong> — 企业外发 / 工单;多类 PII 命中也阻断
+        </span>
+      </label>
+    </fieldset>
+    <p id="tier-hint" class="copy-hint"></p>
+  </section>
+
+  <section class="section">
+    <h2>权限 / 守门清单</h2>
+    <ul class="minimal-list">
+      <li><code>nativeMessaging</code> —— 与本机 Host 通信(唯一运行期敏感权限)</li>
+      <li>host_permissions:ChatGPT / Claude / Gemini / Perplexity 四站</li>
+      <li>CSP <code>script-src 'self'</code>,禁 <code>unsafe-eval</code> / 内联 script</li>
+      <li>原文永不入 chrome.storage / console.log(ADR 0009 §I-9.1)</li>
+    </ul>
+  </section>
+
+  <footer>
+    <small>
+      源码 + 协议契约见 <code>crates/vigil-browser</code> + <code>apps/native-host</code>。
+    </small>
+  </footer>
+
+  <script src="options.js"></script>
+</body>
+</html>

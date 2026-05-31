@@ -1,0 +1,33 @@
+{
+  "id": "ml-ru-058",
+  "text": "Клиент Алексей Петров проживает по адресу: Москва, ул. Тверская, 7",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 13,
+      "end": 40,
+      "extracted_text": "Алексей Петров",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "address",
+      "start": 79,
+      "end": 118,
+      "extracted_text": "Москва, ул. Тверская, 7",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-name-address-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "person_with_address"
+  }
+}

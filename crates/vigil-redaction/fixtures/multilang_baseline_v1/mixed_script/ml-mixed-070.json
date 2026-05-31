@@ -1,0 +1,25 @@
+{
+  "id": "ml-mixed-070",
+  "text": "王小明 works at Acme Corp",
+  "lang": "mixed",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 0,
+      "end": 9,
+      "extracted_text": "王小明",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "mixed-zh-en-name-company-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Mixed:Han+Latin",
+    "category": "zh_en_mix"
+  }
+}

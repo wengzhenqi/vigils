@@ -1,0 +1,33 @@
+{
+  "id": "ml-ru-165",
+  "text": "Пишите на user@test.local или посетите https://test.local/account",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "heldout_human_eval",
+  "expected_findings": [
+    {
+      "label": "email",
+      "start": 18,
+      "end": 33,
+      "extracted_text": "user@test.local",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "url",
+      "start": 58,
+      "end": 84,
+      "extracted_text": "https://test.local/account",
+      "risk_tier": "low",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-email-url-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Mixed:Cyrillic+Latin",
+    "category": "email_with_url"
+  }
+}

@@ -1,0 +1,253 @@
+//! ISS-016 post-exec leak scan 集成测试。
+//!
+//! 验证 `Hub::handle_request("tools/call")` 走完 firewall + scope 快路径后,
+//! 在 `invoke_upstream` 的 `Ok(result)` 分支对 upstream response 做 alias-agnostic
+//! 硬指纹扫描:
+//! - 命中 → `leak_detected_count` +1,写 `secret.leak_detected` 审计事件,**不改**
+//!   返给 agent 的 result(out-of-band 设计)
+//! - 未命中 → 计数器不变,无 `secret.leak_detected` 事件
+//!
+//! 测试用 `MockUpstream` 替代真实 stdio / http transport,直接注入预设 response。
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::err_expect,
+    clippy::panic
+)]
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+
+use vigil_audit::Ledger;
+use vigil_firewall::{scorer::StaticDescriptorOracle, Firewall, FirewallConfig};
+use vigil_mcp::protocol::JsonRpcRequest;
+use vigil_mcp::upstream::{McpUpstream, UpstreamError};
+use vigil_mcp::{compute_argv_hash, Hub, HubConfig, EVENT_SECRET_LEAK_DETECTED};
+use vigil_policy::{defaults::default_ruleset, PolicyEngine};
+use vigil_types::{
+    ApprovalScope, DecisionKind, DecisionRecord, EffectVector, ServerProfile, TransportKind,
+    TrustLevel,
+};
+
+/// 预设 response 的 Mock 上游。
+#[derive(Debug)]
+struct MockUpstream {
+    server_id: String,
+    /// 调用 `tools/call` 时返回的 JSON。
+    canned: Mutex<Value>,
+}
+
+impl MockUpstream {
+    fn new(server_id: &str, canned: Value) -> Self {
+        Self {
+            server_id: server_id.to_string(),
+            canned: Mutex::new(canned),
+        }
+    }
+}
+
+impl McpUpstream for MockUpstream {
+    fn server_id(&self) -> &str {
+        &self.server_id
+    }
+    fn transport(&self) -> TransportKind {
+        TransportKind::Stdio
+    }
+    fn call(
+        &self,
+        _method: &str,
+        _params: Option<Value>,
+        _timeout: Duration,
+    ) -> Result<Value, UpstreamError> {
+        Ok(self.canned.lock().unwrap().clone())
+    }
+    fn shutdown(&self) {}
+}
+
+/// 构造一个 Hub + ledger + mock upstream,且预先注入一条 ToolRoute + session scope
+/// Approved 记录,让 `tools/call` 能直接走 scope 快路径进 `invoke_upstream`。
+fn setup_with_mock(canned: Value) -> (Arc<Ledger>, Arc<Hub>, String) {
+    let l = Arc::new(Ledger::open_in_memory().unwrap());
+    let policy = PolicyEngine::new(default_ruleset());
+    let fw = Arc::new(Firewall::new(
+        l.clone(),
+        policy,
+        FirewallConfig {
+            project_roots: vec!["/proj".into()],
+            ..Default::default()
+        },
+    ));
+    let oracle: Arc<dyn vigil_firewall::scorer::DescriptorOracle> = Arc::new(
+        StaticDescriptorOracle(vigil_firewall::scorer::DescriptorStatus::ApprovedStable),
+    );
+    let hub = Arc::new(Hub::new(
+        l.clone(),
+        fw,
+        oracle,
+        HubConfig {
+            approval_wait: Duration::from_millis(200),
+            ..Default::default()
+        },
+    ));
+
+    // 注册并审批 server(command_hash 必须与 argv 实际 hash 对齐,否则 attach_upstream 拒)
+    let argv = vec!["mock".to_string()];
+    let command_hash = compute_argv_hash(&argv).unwrap();
+    let profile = ServerProfile {
+        server_id: "fs".into(),
+        transport: TransportKind::Stdio,
+        command: Some(argv.clone()),
+        url: None,
+        first_seen_at: 0,
+        command_hash: Some(command_hash),
+        descriptor_hash: None,
+        trust_level: TrustLevel::Untrusted,
+        sandbox_profile_id: None,
+    };
+    l.register_server(&profile).unwrap();
+    l.approve_server("fs", TrustLevel::Limited).unwrap();
+
+    // attach mock upstream
+    let mock = Arc::new(MockUpstream::new("fs", canned));
+    hub.attach_upstream("fs", &argv, mock).unwrap();
+
+    // 注入 session + route,跳过 initialize / tools/list
+    let session_id = l.start_session("leak_test", None).unwrap();
+    hub.set_session_id_for_test(&session_id).unwrap();
+    hub.inject_route_for_test("fs", "read_file", "hash_abc")
+        .unwrap();
+
+    // 埋一条 ThisSession approval,匹配 (fs, read_file, args_hash=json!({}) 的 hash)
+    let args = json!({});
+    let args_hash = {
+        let b = serde_jcs::to_vec(&args).unwrap();
+        let mut h = Sha256::new();
+        h.update(&b);
+        hex::encode(h.finalize())
+    };
+    let dec = DecisionRecord {
+        decision_id: "d-prev".into(),
+        invocation_id: "inv-prev".into(),
+        decision: DecisionKind::Approve,
+        risk_score: 0,
+        reasons: vec![],
+        policy_ids: vec![],
+        created_at: 0,
+    };
+    let ctx = vigil_audit::ApprovalTargetContext {
+        server_id: Some("fs"),
+        tool_name: Some("read_file"),
+        args_hash: Some(&args_hash),
+    };
+    let prev = l
+        .create_approval(
+            &session_id,
+            &dec,
+            &EffectVector::default(),
+            "t",
+            "s",
+            600,
+            ctx,
+        )
+        .unwrap();
+    l.approve(&prev.approval_id, ApprovalScope::ThisSession, Some("u"))
+        .unwrap();
+
+    (l, hub, session_id)
+}
+
+fn call_tool(hub: &Hub) -> vigil_mcp::protocol::JsonRpcResponse {
+    let req = JsonRpcRequest {
+        jsonrpc: "2.0".into(),
+        id: Some(json!(42)),
+        method: "tools/call".into(),
+        params: Some(json!({
+            "name": "fs__read_file",
+            "arguments": {}
+        })),
+    };
+    hub.handle_request(req).unwrap().unwrap()
+}
+
+/// ISS-016-A:upstream response 含 ghp_ github token → post-exec scan 命中 →
+/// `leak_detected_count` == 1,审计里有 `secret.leak_detected` 事件。
+#[test]
+fn post_exec_leak_scan_detects_secret_in_upstream_response() {
+    let canned = json!({
+        "content": "here is your token: ghp_1234567890abcdef1234567890abcdef12345678",
+        "ok": true
+    });
+    let (l, hub, session_id) = setup_with_mock(canned);
+
+    assert_eq!(hub.leak_detected_count(), 0);
+    let resp = call_tool(&hub);
+    assert!(resp.error.is_none(), "upstream 正常返 Ok,不应走 error 分支");
+
+    assert_eq!(
+        hub.leak_detected_count(),
+        1,
+        "post-exec scan 命中应 +1 计数器"
+    );
+
+    let events = l.replay_session_verified(&session_id).unwrap();
+    let leak_evt = events
+        .iter()
+        .find(|e| e.event_type == EVENT_SECRET_LEAK_DETECTED);
+    assert!(
+        leak_evt.is_some(),
+        "必须产生 secret.leak_detected 审计事件,实际事件: {:?}",
+        events.iter().map(|e| &e.event_type).collect::<Vec<_>>()
+    );
+    // payload 应含 rule 名(已脱敏,但 rule 名 `github_token` 本身不含 secret)
+    let evt = leak_evt.unwrap();
+    let rule = evt.payload.get("rule").and_then(Value::as_str);
+    assert_eq!(rule, Some("github_token"));
+}
+
+/// ISS-016-B:upstream response 完全干净 → 计数器不变,无 `secret.leak_detected` 事件。
+#[test]
+fn post_exec_leak_scan_clean_response_no_event() {
+    let canned = json!({"content": "clean readme content", "bytes": 42});
+    let (l, hub, session_id) = setup_with_mock(canned);
+
+    assert_eq!(hub.leak_detected_count(), 0);
+    let resp = call_tool(&hub);
+    assert!(resp.error.is_none());
+
+    assert_eq!(hub.leak_detected_count(), 0, "干净 response 不应增计数器");
+
+    let events = l.replay_session_verified(&session_id).unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|e| e.event_type != EVENT_SECRET_LEAK_DETECTED),
+        "干净 response 不应产 secret.leak_detected 事件"
+    );
+}
+
+/// ISS-016-C:命中 leak 时**不改**返给 agent 的 result(out-of-band 设计保证 MCP
+/// 协议透明;agent 拿到的 JSON 与 upstream 返的完全一致)。
+#[test]
+fn post_exec_leak_does_not_modify_response_to_agent() {
+    let canned = json!({
+        "content": "leaked: ghp_1234567890abcdef1234567890abcdef12345678",
+        "ok": true
+    });
+    let (_l, hub, _sid) = setup_with_mock(canned.clone());
+
+    let resp = call_tool(&hub);
+    assert!(resp.error.is_none());
+    // result 应与 canned 逐字节相等(序列化层已透传)
+    let result = resp.result.as_ref().unwrap();
+    assert_eq!(
+        serde_json::to_string(result).unwrap(),
+        serde_json::to_string(&canned).unwrap(),
+        "post-exec leak 是 out-of-band,不得改变返给 agent 的 result"
+    );
+    // 计数器证明扫描确实跑了
+    assert_eq!(hub.leak_detected_count(), 1);
+}

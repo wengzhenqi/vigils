@@ -1,0 +1,25 @@
+{
+  "id": "ml-ru-052",
+  "text": "По вопросам звоните +7 9004 861 8317",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "phone",
+      "start": 37,
+      "end": 53,
+      "extracted_text": "+7 9004 861 8317",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-phone-only-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "phone_only"
+  }
+}

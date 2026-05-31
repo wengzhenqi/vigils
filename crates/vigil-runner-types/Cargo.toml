@@ -1,0 +1,24 @@
+[package]
+name = "vigil-runner-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Pure types + env policy for Vigil sandbox runner — ExecutionPlan, SandboxProfile, RunnerError, RunnerAuditSink, apply_native_env_policy"
+readme = "README.md"
+keywords = ["vigil", "sandbox", "runner", "execution-plan", "ai-safety"]
+categories = ["data-structures", "api-bindings"]
+
+[lints]
+workspace = true
+
+[dependencies]
+# Pure-types crate:0 vigil deps(ADR 0018 § 2.1 / R1 fix)
+# - default_scrub + leak_scan stays in vigil-runner(vigil-redaction dep)
+# - spawn_native + WasmRunner concrete stays in vigil-runner(wasmtime/sandbox-linux)
+serde = { workspace = true }
+thiserror = { workspace = true }
+# plan.rs `ExecutionPlan::validate` 用 dunce::canonicalize 做 Windows UNC 路径规范化
+dunce = { workspace = true }

@@ -1,0 +1,36 @@
+[package]
+name = "vigil-sandbox-linux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# I07.5(ADR 0007):Linux Landlock LSM 沙箱。
+#
+# **不变量 exception**:本 crate **不**继承 workspace `forbid(unsafe_code)` —— Landlock
+# 的标准集成方式是通过 `std::os::unix::process::CommandExt::pre_exec`,这是 unsafe
+# API。把 unsafe 集中在本 crate 单一函数内,便于审计;所有其他 `vigil-*` crate 仍保持
+# `forbid(unsafe_code)`。本 crate 只在 Linux 目标编译,非 Linux 上相当于不存在。
+[lints.rust]
+# 覆盖 workspace forbid 为 deny,允许局部 `#[allow(unsafe_code)]`
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+dbg_macro = "warn"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+thiserror = { workspace = true }
+landlock = "0.4"
+# libc 用于 pre_exec 闭包内的 errno 常量(EPROTO / EINVAL),确保 async-signal-safe
+# 错误通道 —— 不分配,不 panic,不调用非 async-signal-safe 函数。
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

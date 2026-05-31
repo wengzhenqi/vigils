@@ -1,0 +1,53 @@
+[package]
+name = "vigil-hub-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "vigil_hub_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vigil-hub"
+path = "src/main.rs"
+
+[dependencies]
+vigil-mcp = { path = "../../crates/vigil-mcp" }
+
+# I10b-β:add-remote-mcp 命令所需
+vigil-audit = { path = "../../crates/vigil-audit" }
+# β 代码 R1 BLOCKER 1 修复:默认启用 os-keychain 让 CLI secret 持久化。
+# 平台 backend 不可用时 fail-closed 报错,**不**静默回退到内存
+# (否则 metadata 有但 secret 丢,用户无感知 token 丢失)。
+vigil-lease = { path = "../../crates/vigil-lease", features = ["os-keychain"] }
+vigil-http-auth = { path = "../../crates/vigil-http-auth" }
+vigil-http-transport = { path = "../../crates/vigil-http-transport" }
+# v0.3 Stage 1:`vigil-hub serve --stdio` 需 Hub + Firewall + Policy + 类型
+vigil-firewall = { path = "../../crates/vigil-firewall" }
+vigil-policy = { path = "../../crates/vigil-policy" }
+vigil-types = { path = "../../crates/vigil-types" }
+# ISS-008 Phase 2 T5:ServeError::PrivacyFilterInit 透传 EngineError;feature 注入走
+# vigil-firewall/ort,本依赖默认 0 features(--features ort 时由 vigil-firewall 透传打开)。
+vigil-redaction = { path = "../../crates/vigil-redaction" }
+clap = { workspace = true }
+url = { workspace = true }
+oauth2 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# CLI 级集成测试用(β R1 MUST-FIX 4):InMemorySecretStore 注入 + mock AS
+vigil-audit = { path = "../../crates/vigil-audit", features = ["test-util"] }
+tempfile = { workspace = true }
+
+[features]
+# ISS-008 Phase 2 T5:透传到 vigil-firewall/ort → vigil-redaction/ort,
+# 启用 OrtPiiScanner 注入。默认 feature 矩阵 0 ort 痕迹。
+ort = ["vigil-firewall/ort"]

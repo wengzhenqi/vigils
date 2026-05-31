@@ -1,0 +1,18 @@
+[package]
+name = "vigil-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Core typed data structures for Vigil local AI safety runtime — DecisionRecord, AuditEvent, EffectVector, ApprovalRequest, ToolInvocation"
+keywords = ["vigil", "ai-safety", "audit", "control-plane"]
+categories = ["data-structures", "api-bindings"]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

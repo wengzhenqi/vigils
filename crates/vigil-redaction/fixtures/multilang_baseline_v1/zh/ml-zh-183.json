@@ -1,0 +1,49 @@
+{
+  "id": "ml-zh-183",
+  "text": "项目联系人:吴芳 (13800138769),刘强 (13800138253)",
+  "lang": "zh",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 16,
+      "end": 22,
+      "extracted_text": "吴芳",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 24,
+      "end": 35,
+      "extracted_text": "13800138769",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "person",
+      "start": 37,
+      "end": 43,
+      "extracted_text": "刘强",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 45,
+      "end": 56,
+      "extracted_text": "13800138253",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "zh-multi-person-phone-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Han",
+    "category": "multi_person_phone"
+  }
+}

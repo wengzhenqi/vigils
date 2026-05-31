@@ -1,0 +1,41 @@
+{
+  "id": "ml-ja-106",
+  "text": "申請者 山本健一 のマイナンバー 163287083171 と連絡先 050-2184-7612 を確認してください",
+  "lang": "ja",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 10,
+      "end": 22,
+      "extracted_text": "山本健一",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "account_number",
+      "start": 45,
+      "end": 57,
+      "extracted_text": "163287083171",
+      "risk_tier": "high",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 71,
+      "end": 84,
+      "extracted_text": "050-2184-7612",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ja-mynumber-name-phone-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Mixed:Han+Hiragana+Katakana",
+    "category": "national_id_with_personal_info"
+  }
+}

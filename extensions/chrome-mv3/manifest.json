@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Vigil Paste Guard",
+  "short_name": "Vigil",
+  "version": "0.1.0",
+  "description": "Vigil I09b(α1-α4): paste/submit 守门 —— 硬指纹检测 + 与本机 Native Host(com.vigil.host)通信。原文仅在 Host 内存停留,分类完立即 drop(ADR 0009 §I-9.1)。",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "nativeMessaging",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://www.perplexity.ai/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://www.perplexity.ai/*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Vigil",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

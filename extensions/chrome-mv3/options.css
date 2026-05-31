@@ -1,0 +1,142 @@
+/* options-specific 样式;继承 popup.css 的 CSS vars,仅重写尺寸和布局 */
+.options-body {
+  width: 640px;
+  max-height: none;
+}
+
+.options-body header {
+  padding: 14px 18px 10px;
+}
+.options-body header h1 {
+  font-size: 18px;
+}
+
+.section {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.section h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.section .desc {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.id-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.id-value {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.install-cmd {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.6;
+}
+
+.action-row {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.copy-hint {
+  color: var(--success);
+  font-size: 11px;
+  min-height: 1em;
+  transition: opacity 0.2s;
+}
+.copy-hint.fade {
+  opacity: 0;
+}
+
+.more {
+  margin-top: 12px;
+}
+.more summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 11px;
+  user-select: none;
+}
+.more ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 11px;
+}
+.more code {
+  font-family: var(--mono);
+}
+
+.minimal-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.minimal-list code {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* ISS-007 tier 选择器 */
+.tier-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tier-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tier-row input[type="radio"] {
+  margin-top: 2px;
+}
+.tier-label {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

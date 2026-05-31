@@ -1,0 +1,37 @@
+[package]
+name = "vigil-lease"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Time-bound secret lease broker for Vigil — short-lived credential issuance with automatic expiration and ledger-backed audit"
+keywords = ["vigil", "secrets", "lease", "credentials"]
+categories = ["authentication", "data-structures"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# 启用基于 `keyring` crate 的 OS Keychain 适配。
+# 默认关:跨平台 CI 不稳(Linux Secret Service 依赖 dbus 等),本机 smoke 测试时启用。
+os-keychain = ["dep:keyring"]
+
+[dependencies]
+vigil-types = { path = "../vigil-types" }
+vigil-audit = { path = "../vigil-audit" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+keyring = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# I07 跨 crate 一致性测试(reserved env keys sync)
+vigil-runner = { path = "../vigil-runner" }

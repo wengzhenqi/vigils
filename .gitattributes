@@ -1,0 +1,22 @@
+# 全局默认:Git 自动检测文本,落盘用 OS 原生行尾,仓库内存为 LF
+* text=auto
+
+# Shell 脚本:仓库与工作目录都强制 LF —— 跨平台执行的硬性前提
+# (CRLF shebang 在 Linux/macOS 会报 "bash\r: No such file or directory")
+*.sh text eol=lf
+
+# PowerShell 脚本:保持 CRLF —— Windows 原生
+*.ps1 text eol=crlf
+
+# Windows 批处理
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源保护:禁止 Git 做行尾转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.wasm binary
+*.woff binary
+*.woff2 binary

@@ -1,0 +1,41 @@
+{
+  "id": "ml-ru-008",
+  "text": "Свяжитесь с Дмитрий Соколов, паспорт 1053 331148, телефон +7 9007 603 4557",
+  "lang": "ru",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [
+    {
+      "label": "person",
+      "start": 22,
+      "end": 51,
+      "extracted_text": "Дмитрий Соколов",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "account_number",
+      "start": 68,
+      "end": 79,
+      "extracted_text": "1053 331148",
+      "risk_tier": "high",
+      "redact_action": "redacted"
+    },
+    {
+      "label": "phone",
+      "start": 96,
+      "end": 112,
+      "extracted_text": "+7 9007 603 4557",
+      "risk_tier": "med",
+      "redact_action": "redacted"
+    }
+  ],
+  "source": "synthetic",
+  "source_template": "ru-passport-name-phone-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Cyrillic",
+    "category": "national_id_with_personal_info"
+  }
+}

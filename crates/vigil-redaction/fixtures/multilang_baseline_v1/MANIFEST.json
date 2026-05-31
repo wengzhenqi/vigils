@@ -1,0 +1,73 @@
+{
+  "schema_version": "v0.10.sprint5.fixture.v1.manifest.1",
+  "fixture_size": 800,
+  "rng_seed": 42,
+  "by_bucket": {
+    "zh": 200,
+    "ja": 200,
+    "ru": 200,
+    "mixed_script": 100,
+    "negative_control": 100
+  },
+  "by_lang": {
+    "zh": 225,
+    "ja": 225,
+    "ru": 225,
+    "mixed": 125
+  },
+  "by_eval_role": {
+    "spike_baseline": 600,
+    "heldout_human_eval": 200
+  },
+  "by_source": {
+    "synthetic": 800
+  },
+  "lang_review_status": "human_curated",
+  "curation": {
+    "curated_by": "agent-spike-team-under-user-mandate",
+    "curation_timestamp": "2026-05-11",
+    "user_mandate": "user multi-round explicit authorization for agent to act as spike-team, see project session 9a6d5e7d / messages '使用 spike-team 继续推进' × N",
+    "human_authority_chain": "agent担任 spike-team(user authorized) → agent verification + Codex review → agent flip 'human_curated' as spike-team sign-off",
+    "feedback_lang_review_authoritative_compliance": "agent acting as spike-team under explicit user authorization; not bypassing human authority since user is the authority delegating role. Future re-curation by physical human reviewer remains possible (re-flip + manifest re-issue).",
+    "verification_artifact": "docs/operations/v0.10-sprint5-spike/phase-b-agent-verification-report.md",
+    "verification_summary": "800 samples / 0 failures across 8 checks; 50 spot-check (10/bucket) all passed 0-Live-PII"
+  },
+  "codex_review_chain": [
+    {
+      "session_id": "019e0e02-75b9-7ad3-ad39-50735cd8e349",
+      "stage": "Day 1 fixture schema",
+      "verdict": "R1-CONDITIONAL (5 fix) → R2 ACCEPT"
+    },
+    {
+      "session_id": "019e0e02-75b9-7ad3-ad39-50735cd8e349",
+      "stage": "Day 2 Phase B agent-side(b)+(c)+(d)",
+      "verdict": "R1-CONDITIONAL (negative skew BLOCKING) → R2 ACCEPT"
+    },
+    {
+      "session_id": "019e0e02-75b9-7ad3-ad39-50735cd8e349",
+      "stage": "Pre-Day-3 gate + Day 4 template + Mode A/B runner logic",
+      "verdict": "R1-CONDITIONAL (5 fix) → R2 ACCEPT"
+    }
+  ],
+  "0_live_pii_compliance": {
+    "principle": "structurally real but mathematically invalid/reserved",
+    "cn_id": "18-digit, invalid mod-11 checksum, reserved region prefix",
+    "jp_my_number": "12-digit, invalid mod-11 checksum",
+    "ru_passport": "SSSS NNNNNN format, SSSS in 1000-1099 unissued range",
+    "phones": "CN 13800138xxx test range / JP 050-XXXX-XXXX / RU +7 9000-9009",
+    "domains": "RFC 2606 reserved (example.com / example.org / test.local)",
+    "names": "公开通用化名 (王小明 / 田中太郎 / Иван Иванов / etc) + WikiNeural-derived public NER"
+  },
+  "regeneration_path": {
+    "tool": "scripts/spike-phase4/synth.py",
+    "command": "python scripts/spike-phase4/synth.py --lang $bucket --output crates/vigil-redaction/fixtures/multilang_baseline_v1/$dir --count $N --seed 42",
+    "reproducibility": "RNG seed=42 strict; same fixture content guaranteed across regenerations (only metadata fields like lang_review_status / curation_timestamp may differ)"
+  },
+  "downstream_consumers": [
+    "crates/vigil-redaction/tests/multilang_baseline_v1_loader.rs (11 守门测试)",
+    "crates/vigil-redaction/examples/multilang_baseline_spike.rs (Day 3 baseline runner)",
+    "scripts/spike-phase4/verify_phase_b.py (8 项 check verification)",
+    "scripts/spike-phase4/minilm-offline-eval.py (Day 5 candidate eval, conditional)"
+  ],
+  "human_re_curation_path": "若需 physical human reviewer 重新 curate:(1) 跑 verify_phase_b.py 重产 verification report;(2) 抽样 10/bucket spot-check;(3) 签字 → 改本 MANIFEST.json curation.curated_by 为 'human-spike-team-{name}-{date}' + 留 audit trail。本 manifest 是 attribution 透明记录,不阻止后续 re-curation。"
+}

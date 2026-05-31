@@ -1,0 +1,57 @@
+[package]
+name = "vigil-http-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+vigil-types = { path = "../vigil-types" }
+vigil-audit = { path = "../vigil-audit" }
+vigil-lease = { path = "../vigil-lease" }
+vigil-mcp = { path = "../vigil-mcp" }
+vigil-http-auth = { path = "../vigil-http-auth" }
+
+# I10b-α2 严格 HTTP 栈(ADR 0011 §α2-D1);workspace deps 已收紧 default-features=false
+reqwest = { workspace = true }
+webpki-roots = { workspace = true }
+# I10b-β:loopback OAuth redirect 浏览器打开(fallback 打印 URL)
+open = { workspace = true }
+
+# JWKS / JWT 签名验证
+jsonwebtoken = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+
+# tokio 用于 reqwest::blocking 内部 + singleflight 语义(Mutex 模式不走异步)
+# 不直接 expose async API;Hub 模型保持同步(I04 决策)
+tokio = { workspace = true }
+
+[dev-dependencies]
+vigil-audit = { path = "../vigil-audit", features = ["test-util"] }
+vigil-lease = { path = "../vigil-lease" }
+# 真 TLS 集成测试夹具
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+tokio-rustls = { workspace = true }
+tempfile = { workspace = true }
+# I10b-α2 代码 R1 MUST-FIX 4:RS256 真密钥 round trip;rcgen 的 ring 后端不支持
+# RSA 生成,所以用 rsa crate(纯 Rust;仅 dev 依赖,不进生产树)
+rsa = "0.9"
+# rand 0.8 与 rsa 0.9 协同(rand_core 0.6);此处用 `rand_08` 别名以显式标识版本
+rand_08 = { package = "rand", version = "0.8" }
+# I10b-β 端到端 loopback flow:CsrfToken(与 vigil-http-auth 用同版本)
+oauth2 = { workspace = true }

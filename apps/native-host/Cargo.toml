@@ -1,0 +1,35 @@
+[package]
+name = "vigil-native-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "vigil-native-host"
+path = "src/main.rs"
+
+[lib]
+name = "vigil_native_host"
+path = "src/lib.rs"
+
+[dependencies]
+vigil-browser = { path = "../../crates/vigil-browser" }
+vigil-audit = { path = "../../crates/vigil-audit" }
+vigil-redaction = { path = "../../crates/vigil-redaction" }
+serde_json = { workspace = true }
+# β1:install/uninstall/status CLI + 跨平台 Chrome Native Messaging Host manifest 注册
+clap = { workspace = true }
+dirs = "6"
+
+# Windows 注册表写入(Chrome 读 HKCU\Software\Google\Chrome\NativeMessagingHosts\<name>
+# 的默认值作为 manifest JSON 路径)
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+
+[dev-dependencies]
+tempfile = { workspace = true }

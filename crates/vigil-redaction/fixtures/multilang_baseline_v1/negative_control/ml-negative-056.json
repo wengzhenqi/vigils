@@ -1,0 +1,16 @@
+{
+  "id": "ml-negative-056",
+  "text": "Acme Corp 公司在 Tokyo 总部发布了新产品",
+  "lang": "mixed",
+  "lang_review_status": "human_curated",
+  "eval_role": "spike_baseline",
+  "expected_findings": [],
+  "source": "synthetic",
+  "source_template": "negative-mixed-multinational-v1",
+  "created_by": "spike-script-v1",
+  "created_at": "2026-05-10",
+  "metadata": {
+    "script": "Mixed:Han+Latin",
+    "category": "trademark_lookalike"
+  }
+}

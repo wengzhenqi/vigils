@@ -1,0 +1,118 @@
+[package]
+name = "vigil-redaction"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Privacy filter for Vigil — hard fingerprint rules (13 kinds) + optional ONNX-backed PII scanner with multilang ensemble"
+keywords = ["vigil", "privacy", "pii", "redaction", "ai-safety"]
+categories = ["text-processing", "api-bindings"]
+# v0.11.2 publish:exclude 大 fixture + spike scripts(800-sample 多语言 fixture
+# 仅本地 dev/test 用,不应进 crates.io tarball)。
+exclude = [
+    "fixtures/**",
+    "tests/**",
+    "examples/**",
+    "benches/**",
+]
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
+# ISS-005: scan::ScanError uses thiserror (workspace)
+thiserror = { workspace = true }
+
+# ISS-008 Phase 1: ORT 1.24 q4f16 推理(feature gated;默认 build 0 ort 痕迹)
+# 钉死 =2.0.0-rc.12 避免 rc ABI 漂;load-dynamic 让 build 不依赖 onnxruntime.dll(运行时从 PATH 加载)
+# api-24 是 q4f16 GatherBlockQuantized 算子要求的最低 API(ADR 0013)
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["std", "load-dynamic", "ndarray", "api-24"], optional = true }
+tokenizers = { workspace = true, optional = true }
+ndarray = { workspace = true, optional = true }
+
+# v0.5 P2 ADR 0012 first-run-download(bootstrap 子模块,仅 ort feature 启用):
+# - reqwest:blocking + rustls-tls(workspace 已含 blocking/http2/json features)
+# - sha2 / hex:整文件 sha256 校验(manifest SSOT)
+# - dirs:default target_dir 解析(<data_local>/vigil/models/<name>-<version>/)
+# - serde:Manifest serde derive(workspace 默认已开 derive)
+# 全部 optional=true;默认 cargo build/tree -e normal --no-default-features 0 痕迹
+reqwest = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+dirs = { version = "5", optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+# S1 性能基准:scrub_text 对 1 KB / 10 KB / 100 KB 文本的吞吐(BM-01)
+criterion = { workspace = true }
+# v0.5 P2 ISS-008 Phase 3:fixture(labeled_samples.json)+ bench JSON 输出反/序列化
+# 仅 dev-deps,不污染默认运行时依赖图;workspace serde 已开 derive feature
+serde = { workspace = true }
+# v0.5 P2 bootstrap 单测:本地 stub HTTP server(同步、零异步运行时);
+# tempfile workspace dep 已存在,复用 [workspace.dependencies] 声明
+tiny_http = "0.12"
+tempfile = { workspace = true }
+
+[[bench]]
+name = "scrub"
+harness = false
+
+# v0.7-α2 Phase 2A:scan_text(Hard-only 默认路径)criterion 基线
+# - ADR 0016 invariant #13 默认关键路径 SLO 量化基线
+# - 0 ORT,默认 feature 即可跑;workspace CI gate 候选
+[[bench]]
+name = "scan_hardonly"
+harness = false
+
+# v0.5 P2 ISS-008 Phase 3:precision/recall benchmark 工具(三组对比 + 8x8 confusion + JSON 报告)
+# - harness=false:自定 main()(非 criterion microbench),输出可对比 JSON 给 ADR Revised 引用
+# - required-features=["ort"]:让默认 cargo build/test --workspace **完全不触**该 bench,
+#   严格守住 0 ort 痕迹 SLA(详见 plan _metadata.constraints + ADR 0013 Revised 段)
+[[bench]]
+name = "precision_recall"
+harness = false
+required-features = ["ort"]
+
+# v0.6 release verification:bootstrap fallback smoke(单文件 ~ 3 KB,~ 1s);
+# 同样守 ort feature gate 0 ort 痕迹 SLA。
+[[example]]
+name = "bootstrap_fallback_smoke"
+required-features = ["ort"]
+
+# v0.7-α3 R1(E6a):远程三引擎 ensemble e2e bench(对齐 Python spike-3 数据)。
+# 守 ort feature gate;运行时需 VIGIL_R1_OPENAI_DIR / VIGIL_R1_XLMR_DIR /
+# VIGIL_R1_YONIGO_DIR + VIGIL_R1_FIXTURE 指向远程模型目录与 fixture。
+[[example]]
+name = "r1_ensemble_e2e"
+required-features = ["ort"]
+
+# v0.10 Sprint 5 Phase 4 spike — multilang baseline runner(沿 r1_ensemble_e2e 范式)。
+# 守 ort feature gate;运行时需 VIGIL_ML_*_DIR 指向远程模型与 fixture。
+# CI 默认 `--all-targets` 不带 feature 会跳过编译(required-features 不满足)。
+[[example]]
+name = "multilang_baseline_spike"
+required-features = ["ort"]
+
+[features]
+# ORT-backed 真 Privacy Filter 推理(ISS-008 Phase 1)。默认 feature **不**含 ort:
+# - 默认 cargo build/test --workspace 0 ort 痕迹(cargo tree -e normal 验证)
+# - --features ort 激活 OrtEngine + Mutex<Session> + tokenizers + ndarray
+# 三层 smoke gate(cfg + #[ignore] + VIGIL_RUN_ORT_SMOKE=1)由 tests/engine_ort_smoke.rs 实施
+#
+# v0.5 P2 cascade:bootstrap 子模块依赖 reqwest/sha2/hex/dirs/serde(全 optional),
+# 与 ort 同 feature 控制(ADR 0012 first-run-download 仅在真推理路径上生效)。
+ort = [
+    "dep:ort",
+    "dep:tokenizers",
+    "dep:ndarray",
+    "dep:reqwest",
+    "dep:sha2",
+    "dep:hex",
+    "dep:dirs",
+    "dep:serde",
+]

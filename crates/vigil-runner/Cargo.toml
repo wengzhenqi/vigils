@@ -1,0 +1,43 @@
+[package]
+name = "vigil-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# 启用 wasmtime-backed WasmRunner。默认关 —— wasmtime 编译慢(1-2 min),
+# 开发迭代时可关闭以加速;CI / 真 Wasm 验收测试必须启用。
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:cap-std"]
+
+[dependencies]
+# ADR 0018 v0.13 split:pure types + env policy 抽离到 vigil-runner-types 独立
+# crate;本 crate `pub use vigil_runner_types::*` 保 backward compat。
+vigil-runner-types = { path = "../vigil-runner-types" }
+vigil-types = { path = "../vigil-types" }
+vigil-audit = { path = "../vigil-audit" }
+vigil-lease = { path = "../vigil-lease" }
+vigil-redaction = { path = "../vigil-redaction" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+dunce = { workspace = true }
+
+wasmtime = { workspace = true, optional = true }
+wasmtime-wasi = { workspace = true, optional = true }
+cap-std = { workspace = true, optional = true }
+
+# I07.5(ADR 0007 §8.6):Linux Landlock 沙箱。target-gated,非 Linux 目标不引入。
+# vigil-sandbox-linux 自身在非 Linux 是空 crate,此处仍加 target gate 避免 Cargo.lock
+# 污染跨平台 CI 的解析(与 workspace `unsafe_code=forbid` 的卫生一致)。
+[target.'cfg(target_os = "linux")'.dependencies]
+vigil-sandbox-linux = { path = "../vigil-sandbox-linux" }
+
+[dev-dependencies]
+tempfile = { workspace = true }

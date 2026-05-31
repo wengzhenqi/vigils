@@ -1,0 +1,46 @@
+[package]
+name = "vigil-audit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Append-only audit ledger for Vigil with SQLite backend, SHA256 hash chain, and FTS5 search — tamper-evident decision/effect history"
+keywords = ["vigil", "audit", "ledger", "sqlite", "hash-chain"]
+categories = ["database", "data-structures"]
+
+[lints]
+workspace = true
+
+[features]
+# 仅供 workspace 内其它 crate 的测试使用:暴露绕过 API 校验的 raw insert helper,
+# 用于回归"脏 SQLite 行"场景(fail-closed 路径)。绝不在 prod build 开启。
+test-util = []
+
+[dependencies]
+vigil-types = { path = "../vigil-types" }
+# I01 扩展依赖:fail-closed 入口自检(ADR 0002 §D1)。
+# I00 的 "只能依赖 vigil-types" 约束是 I00 阶段性规则,I01 按 ADR 0002 明确放开。
+vigil-redaction = { path = "../vigil-redaction" }
+
+# I01 核心依赖
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# S1 性能基准:append_event 延迟(BM-02)+ 10 万条后 append 退化(BM-05)
+criterion = { workspace = true }
+
+[[bench]]
+name = "ledger"
+harness = false

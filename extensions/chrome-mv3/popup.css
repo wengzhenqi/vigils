@@ -1,0 +1,223 @@
+/*
+ * Vigil popup 样式 —— 独立 CSS,不依赖 popup.html 内联 style。
+ * Tailwind / framework 不适用(CSP `script-src 'self'`,扩展 popup CSS 也需 self-hosted)。
+ */
+:root {
+  --bg: #1f2937;
+  --panel: #111827;
+  --fg: #f3f4f6;
+  --muted: #9ca3af;
+  --border: #374151;
+  --accent: #60a5fa;
+  --success: #34d399;
+  --warn: #fbbf24;
+  --error: #f87171;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--fg);
+  background: var(--bg);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+body {
+  width: 400px;
+  max-height: 560px;
+  overflow-y: auto;
+}
+
+header {
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+}
+header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  display: inline;
+}
+header .subtitle {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.count-label {
+  flex: 1;
+  color: var(--muted);
+}
+.tier-badge {
+  color: var(--muted);
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  letter-spacing: 0.2px;
+}
+.tier-badge strong {
+  color: var(--accent);
+  font-weight: 600;
+}
+button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+button:hover {
+  background: var(--border);
+}
+.actions a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 11px;
+}
+.actions a:hover {
+  text-decoration: underline;
+}
+
+#findings-section {
+  padding: 10px 14px;
+}
+.empty-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+.empty-hint a {
+  color: var(--accent);
+}
+.hidden {
+  display: none !important;
+}
+
+.findings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.findings-list li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  font-size: 11px;
+}
+.findings-list li:last-child {
+  border-bottom: none;
+}
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #111827;
+}
+.tag-allow {
+  background: var(--success);
+}
+.tag-redact {
+  background: var(--warn);
+}
+.tag-block {
+  background: var(--error);
+}
+/* α4:allow_exempt —— 用户主动豁免(session-scoped),视觉介于 warning 和 success 之间,
+   让审计员能在条目列表快速识别"这不是守门放行,是用户豁免"。 */
+.tag-allow_exempt {
+  background: var(--warn);
+  color: #111827;
+}
+.meta-line {
+  color: var(--muted);
+}
+.meta-line code {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg);
+}
+.findings-inline {
+  margin-top: 2px;
+}
+.findings-inline code {
+  display: inline-block;
+  padding: 0 4px;
+  margin: 1px 2px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+footer {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* α4 exempt section */
+.exempt-section {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.exempt-status {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+#exempt-label {
+  color: var(--muted);
+}
+#exempt-label.exempt-active {
+  color: var(--warn);
+  font-weight: 600;
+}
+.exempt-remaining {
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.exempt-actions {
+  display: flex;
+  gap: 6px;
+}
+.exempt-actions button {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+#exempt-clear-btn {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+#exempt-clear-btn:hover {
+  filter: brightness(1.1);
+  background: var(--error);
+}

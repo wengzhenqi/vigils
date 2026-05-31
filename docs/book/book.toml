@@ -1,0 +1,21 @@
+[book]
+title = "Vigil — Local AI Agent Control Plane"
+authors = ["Vigil Project Contributors"]
+description = "User guide for Vigil — local-first AI Agent control plane: action firewall, audit ledger, privacy filter, MCP hub, approval queue."
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://vigils.ai/source/vigil"
+edit-url-template = "https://vigils.ai/source/vigil/_edit/master/docs/book/src/{path}"
+site-url = "/docs/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 30

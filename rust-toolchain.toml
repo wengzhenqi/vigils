@@ -1,0 +1,7 @@
+[toolchain]
+# I00：采用滚动 "stable" 通道,workspace.package.rust-version = 1.80 负责 MSRV 兜底。
+# 若后续发现上游依赖对某个 stable 版本有硬性要求(例如 Tauri 2 对 rustc 的最低要求),
+# 再改为具体版本号,同步调整 Cargo.toml 的 rust-version。
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

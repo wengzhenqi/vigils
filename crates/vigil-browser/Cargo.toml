@@ -1,0 +1,19 @@
+[package]
+name = "vigil-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+vigil-redaction = { path = "../vigil-redaction" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+once_cell = { workspace = true }
+regex = { workspace = true }
+url = { workspace = true }
