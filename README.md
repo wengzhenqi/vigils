@@ -101,9 +101,9 @@ Pre-built installers and binaries for **Windows, macOS, and Linux** are attached
 
 | Platform | Desktop app | CLI |
 |---|---|---|
-| **Windows** | `.msi` / `.exe` (NSIS) | `vigil-hub.exe` |
-| **macOS** | `.dmg` | `vigil-hub` |
-| **Linux** | `.AppImage` / `.deb` / `.rpm` | `vigil-hub` |
+| **Windows** | `.exe` (NSIS setup) | `vigil-hub.exe` (in `vigils-cli-…-windows-msvc.zip`) |
+| **macOS** | `.dmg` | `vigil-hub` (in `vigils-cli-…-apple-darwin.tar.gz`) |
+| **Linux** | `.AppImage` / `.deb` | `vigil-hub` (in `vigils-cli-…-linux-gnu.tar.gz`) |
 
 > Early releases are unsigned; your OS may show a Gatekeeper / SmartScreen prompt on first run.
 
