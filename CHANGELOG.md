@@ -7,7 +7,7 @@ All notable changes to Vigils are documented here. Versions follow
 
 ---
 
-## [Unreleased]
+## [v0.1.0] — 2026-06-01
 
 First public release of Vigils — a local control plane for AI agents.
 Vigils 首个公开版本 —— 面向 AI Agent 的本地控制平面。
