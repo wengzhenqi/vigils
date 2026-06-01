@@ -46,16 +46,12 @@ jobs:
           if [ ! -s "$notes" ]; then
             printf 'Vigils %s — a local-first control plane for AI agents.\n' "$tag" > "$notes"
           fi
-          cat >> "$notes" <<'EOF'
-
----
-
-**Downloads.** Desktop installers (Windows `.exe` / `.msi`, macOS `.dmg`, Linux `.AppImage` / `.deb` / `.rpm`) and CLI binaries (`vigil-hub`, `vigil-native-host`) are attached below. The Chrome MV3 extension lives in `extensions/chrome-mv3/`.
-
-Early releases are unsigned; your OS may show a Gatekeeper / SmartScreen prompt on first run.
-
-Apache-2.0 · https://vigils.ai
-EOF
+          {
+            printf '\n---\n\n'
+            printf '%s\n\n' '**Downloads.** Desktop installers (Windows `.exe` / `.msi`, macOS `.dmg`, Linux `.AppImage` / `.deb` / `.rpm`) and CLI binaries (`vigil-hub`, `vigil-native-host`) are attached below. The Chrome MV3 extension lives in `extensions/chrome-mv3/`.'
+            printf '%s\n\n' 'Early releases are unsigned; your OS may show a Gatekeeper / SmartScreen prompt on first run.'
+            printf '%s\n' 'Apache-2.0 · https://vigils.ai'
+          } >> "$notes"
           echo "path=$notes" >> "$GITHUB_OUTPUT"
 
       - name: Create / update release
