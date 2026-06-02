@@ -27,7 +27,7 @@
     "privacy": "隐私发现"
   },
   "sidebar": {
-    "app_title": "Vigil 桌面",
+    "app_title": "Vigils 桌面",
     "app_subtitle": "本地 AI 控制平面",
     "shortcuts_button": "⌨ 快捷键",
     "theme_dark": "深色",
@@ -108,7 +108,7 @@
   },
   "privacy": {
     "page_title": "隐私发现",
-    "page_subtitle_1": "Vigil 在 firewall preflight + 扩展粘贴 + 凭据扫描 等路径拦下的敏感命中。",
+    "page_subtitle_1": "Vigils 在 firewall preflight + 扩展粘贴 + 凭据扫描 等路径拦下的敏感命中。",
     "page_subtitle_strong": "原文绝不持久化",
     "page_subtitle_2": "— 此面板仅展 label / count / fingerprint 元数据。",
     "load_error": "无法加载 Privacy Findings:{msg}",
@@ -160,7 +160,7 @@
     "label_summary": "摘要",
     "label_expires_at": "过期时间",
     "privacy_findings_title": "隐私发现",
-    "privacy_findings_note": "本 session 内 Vigil 拦下的 PII / 凭证类型 + 次数;原文绝不持久化。",
+    "privacy_findings_note": "本 session 内 Vigils 拦下的 PII / 凭证类型 + 次数;原文绝不持久化。",
     "effect_vector_title": "副作用向量",
     "effect_kinds_label": "推断出的副作用类型",
     "effect_destructive": "破坏性(destructive)",

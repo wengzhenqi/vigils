@@ -8,6 +8,21 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.6] — 2026-06-03
+
+In-app branding consistency. The desktop UI showed "Vigil" (singular) in its title, sidebar
+header, and a couple of descriptions, while the product is "Vigils". Those user-visible
+strings now read "Vigils".
+
+### Changed
+
+- Desktop UI text uses the product name "Vigils" consistently — window / document title,
+  sidebar header ("Vigils Desktop" / "Vigils 桌面"), and the privacy-findings descriptions. No
+  functional change; CLI binaries (`vigil-hub`, `vigil-native-host`) and code identifiers are
+  unaffected.
+
+---
+
 ## [v0.1.5] — 2026-06-03
 
 Desktop executable naming fix. The installed desktop program is now `vigils` instead of the

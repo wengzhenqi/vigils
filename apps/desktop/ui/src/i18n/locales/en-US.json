@@ -27,7 +27,7 @@
     "privacy": "Privacy"
   },
   "sidebar": {
-    "app_title": "Vigil Desktop",
+    "app_title": "Vigils Desktop",
     "app_subtitle": "local AI control plane",
     "shortcuts_button": "⌨ Shortcuts",
     "theme_dark": "Dark",
@@ -108,7 +108,7 @@
   },
   "privacy": {
     "page_title": "Privacy Findings",
-    "page_subtitle_1": "Sensitive hits intercepted by Vigil across firewall preflight, extension paste, and credential scans.",
+    "page_subtitle_1": "Sensitive hits intercepted by Vigils across firewall preflight, extension paste, and credential scans.",
     "page_subtitle_strong": "Raw text is never persisted",
     "page_subtitle_2": "— this panel shows only label / count / fingerprint metadata.",
     "load_error": "Failed to load Privacy Findings: {msg}",
@@ -160,7 +160,7 @@
     "label_summary": "Summary",
     "label_expires_at": "Expires At",
     "privacy_findings_title": "Privacy Findings",
-    "privacy_findings_note": "PII / credential types and counts intercepted by Vigil in this session; raw text is never persisted.",
+    "privacy_findings_note": "PII / credential types and counts intercepted by Vigils in this session; raw text is never persisted.",
     "effect_vector_title": "Effect Vector",
     "effect_kinds_label": "Inferred side-effect types",
     "effect_destructive": "Destructive",
