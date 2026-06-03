@@ -2,15 +2,18 @@
 
 `vigil-firewall::Firewall::evaluate(invocation, decision) → FirewallOutcome`
 
-Fail-closed effect gating 3-decision API:
-- **Allow** — policy + privacy + scope all pass
-- **ApprovalRequired** — risky → queue for human
-- **Deny** — policy block / PII / scope outside allowlist
+A fail-closed effect-gating API with three outcomes:
+
+- **Allow** — policy, privacy, and scope checks all pass.
+- **ApprovalRequired** — a risky effect is queued for a human.
+- **Deny** — policy block, PII detected, or scope outside the allowlist.
 
 ## Policy DSL
 
-per ADR 0011 + I10c-β2:OAuth scope allowlist 在 firewall 层强制。
+OAuth scope allowlists are enforced at the firewall layer (see ADR 0011): a request whose
+granted scopes fall outside the configured allowlist is denied by default.
 
-## PII Scanner 集成(ADR 0013)
+## PII scanner integration
 
-Hard rules(13 kinds)+ optional ONNX ensemble 双层。详见 [Privacy Filter](./privacy-filter.md)。
+Two layers of defense — hard fingerprint rules plus an optional ONNX ensemble. See
+[Privacy Filter](./privacy-filter.md) and ADR 0013.

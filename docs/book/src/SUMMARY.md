@@ -34,6 +34,4 @@
 
 # Release Notes
 
-- [v0.13.0-rc.1](./releases/v0.13.0-rc.1.md)
-- [v0.12.x line](./releases/v0.12-line.md)
-- [v0.11.x line](./releases/v0.11-line.md)
+- [Changelog & Releases](./releases/changelog.md)

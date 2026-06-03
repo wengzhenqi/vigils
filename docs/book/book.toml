@@ -1,16 +1,17 @@
 [book]
-title = "Vigil — Local AI Agent Control Plane"
-authors = ["Vigil Project Contributors"]
-description = "User guide for Vigil — local-first AI Agent control plane: action firewall, audit ledger, privacy filter, MCP hub, approval queue."
+title = "Vigils — Local AI Agent Control Plane"
+authors = ["Vigils Project Contributors"]
+description = "User guide for Vigils — local-first AI Agent control plane: action firewall, audit ledger, privacy filter, MCP hub, approval queue."
 language = "en"
 src = "src"
 
 [output.html]
 default-theme = "navy"
 preferred-dark-theme = "navy"
-git-repository-url = "https://vigils.ai/source/vigil"
-edit-url-template = "https://vigils.ai/source/vigil/_edit/master/docs/book/src/{path}"
-site-url = "/docs/"
+git-repository-url = "https://github.com/duncatzat/vigils"
+edit-url-template = "https://github.com/duncatzat/vigils/edit/main/docs/book/src/{path}"
+# GitHub Pages project site path (https://duncatzat.github.io/vigils/).
+site-url = "/vigils/"
 
 [output.html.fold]
 enable = true

@@ -1,28 +1,27 @@
-# ADR Index
+# Architecture Decision Records
 
-| # | Iteration | Title |
-|---|---|---|
-| 0001 | I01 | SQLite Ledger |
-| 0002 | I01 | Hash chain canonical JSON |
-| 0003 | I02+I03 | Firewall + Approval Queue |
-| 0004 | I04 | MCP Hub + Outbox |
-| 0005 | I05 | Descriptor Pinning |
-| 0006 | I06 | Secret Lease Broker |
-| 0007 | I07 + I07.5 | Sandbox Runner(Wasm + Native + Landlock)|
-| 0008 | I08a | Desktop UI Protocol |
-| 0009 | I09a | Browser Extension + Native Host |
-| 0010 | I10a | HTTP MCP Auth |
-| 0011 | I10b | HTTP Auth contract(rustls)|
-| 0012 | v0.4 | Model distribution |
-| 0013 | v0.4 S2 | Hard×Model merge |
-| 0014 | v0.5 P1 | Tauri embed Hub α1 |
-| 0015 | v0.7-α | SDK boundary |
-| 0016 | v0.7-α5 | Performance gate |
-| 0017 | v0.9 | Model descriptor design |
-| 0018 | v0.13 | vigil-runner-types split |
+Every significant design decision is recorded as an ADR under
+[`docs/adr/`](https://github.com/duncatzat/vigils/tree/main/docs/adr). Each ADR and its
+implementation were reviewed before merge.
 
-Source:`docs/adr/<id>-<slug>.md`(repo 内)。
-
-## Codex review
-
-每个 ADR + 实施 commit 经 Codex review,verdict 记 ADR 末段。
+| # | Title |
+|---|---|
+| [0001](https://github.com/duncatzat/vigils/blob/main/docs/adr/0001-action-control-plane.md) | Action control plane |
+| [0002](https://github.com/duncatzat/vigils/blob/main/docs/adr/0002-audit-ledger.md) | Audit ledger + hash chain (revised: v2) |
+| [0003](https://github.com/duncatzat/vigils/blob/main/docs/adr/0003-firewall-and-approval.md) | Firewall + approval queue |
+| [0004](https://github.com/duncatzat/vigils/blob/main/docs/adr/0004-mcp-hub-and-outbox.md) | MCP hub + outbox |
+| [0005](https://github.com/duncatzat/vigils/blob/main/docs/adr/0005-descriptor-pinning-and-drift.md) | Descriptor pinning + drift |
+| [0006](https://github.com/duncatzat/vigils/blob/main/docs/adr/0006-secret-lease-broker.md) | Secret lease broker |
+| [0007](https://github.com/duncatzat/vigils/blob/main/docs/adr/0007-sandbox-runner.md) | Sandbox runner (Wasm + native + Landlock) |
+| [0008](https://github.com/duncatzat/vigils/blob/main/docs/adr/0008-desktop-ui.md) | Desktop UI protocol |
+| [0009](https://github.com/duncatzat/vigils/blob/main/docs/adr/0009-browser-extension-mvp.md) | Browser extension + native host |
+| [0010](https://github.com/duncatzat/vigils/blob/main/docs/adr/0010-http-mcp-auth.md) | HTTP MCP auth |
+| [0011](https://github.com/duncatzat/vigils/blob/main/docs/adr/0011-http-transport-and-jwks.md) | HTTP transport + JWKS |
+| [0012](https://github.com/duncatzat/vigils/blob/main/docs/adr/0012-model-distribution.md) | Model distribution |
+| [0013](https://github.com/duncatzat/vigils/blob/main/docs/adr/0013-hardfp-model-merge.md) | Hard × model merge |
+| [0014](https://github.com/duncatzat/vigils/blob/main/docs/adr/0014-tauri-embed-hub.md) | Tauri-embedded Hub |
+| [0015](https://github.com/duncatzat/vigils/blob/main/docs/adr/0015-sdk-boundary.md) | SDK boundary |
+| [0016](https://github.com/duncatzat/vigils/blob/main/docs/adr/0016-performance-gate.md) | Performance gate |
+| [0017](https://github.com/duncatzat/vigils/blob/main/docs/adr/0017-model-descriptor-design.md) | Model descriptor design |
+| [0018](https://github.com/duncatzat/vigils/blob/main/docs/adr/0018-vigil-runner-types-split.md) | `vigil-runner-types` split |
+| [0019](https://github.com/duncatzat/vigils/blob/main/docs/adr/0019-audit-advisories-policy.md) | Audit advisories policy |

@@ -2,12 +2,12 @@
 
 ```toml
 [dependencies]
-vigil-sdk = "0.13"
+vigil-sdk = "0.1"
 ```
 
 ## Hello, redaction
 
-Hard-fingerprint PII detection — zero model deps:
+Hard-fingerprint PII detection — zero model dependencies:
 
 ```rust
 use vigil_sdk::prelude::*;
@@ -19,11 +19,11 @@ fn main() {
     for f in &result.findings {
         println!("{:?} @ {:?}", f.kind, f.span);
     }
-    // Output: "github_token" @ (5, 45)
+    // Output: github_token @ (5, 45)
 }
 ```
 
-## Firewall + Approval
+## Firewall + approval
 
 ```rust
 use vigil_sdk::prelude::*;
@@ -38,15 +38,15 @@ match firewall.evaluate(&invocation, &decision) {
 
 ## Invariants
 
-1. **Fail-closed** — errors → DENY
-2. **No-plaintext audit**
-3. **DecisionRecord mandatory**
-4. **API stability** — 0.x minor allowed,v1.0 freeze
+1. **Fail-closed** — errors → DENY.
+2. **No-plaintext audit**.
+3. **`DecisionRecord` mandatory**.
+4. **API stability** — 0.x minor evolution allowed; v1.0 freezes the surface.
 
-See [Invariants](../sdk/invariants.md)。
+See [Invariants](../sdk/invariants.md).
 
 ## Feature flags
 
 | Feature | Default | Description |
 |---|---|---|
-| `ort` | off | ONNX-Runtime PII scanner(3-engine ensemble) |
+| `ort` | off | ONNX-Runtime PII scanner (3-engine ensemble) |

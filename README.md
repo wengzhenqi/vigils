@@ -194,7 +194,8 @@ docs/
 
 ## Documentation
 
-- **User guide** (mdBook): [`docs/book/`](./docs/book)
+- **User guide** (mdBook): **<https://duncatzat.github.io/vigils/>** — or build [`docs/book/`](./docs/book) locally
+- **Security audit**: [`docs/security/SECURITY-AUDIT-2026-06-03.md`](./docs/security/SECURITY-AUDIT-2026-06-03.md) — comprehensive baseline (OWASP + STRIDE + supply chain), 9.9/10, 0 critical / high
 - **Architecture Decision Records**: [`docs/adr/`](./docs/adr)
 - **Threat model**: [`docs/threat-model/`](./docs/threat-model)
 - **SDK surface**: [`docs/sdk-shallow-api.md`](./docs/sdk-shallow-api.md)

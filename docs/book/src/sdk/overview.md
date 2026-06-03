@@ -3,9 +3,10 @@
 [![crates.io](https://img.shields.io/crates/v/vigil-sdk.svg)](https://crates.io/crates/vigil-sdk)
 [![docs.rs](https://docs.rs/vigil-sdk/badge.svg)](https://docs.rs/vigil-sdk)
 
-公开稳定 SDK facade(`vigil-types` / `vigil-firewall` / `vigil-redaction` / `vigil-mcp` re-export)。
+A stable public facade that re-exports the `vigil-types`, `vigil-firewall`,
+`vigil-redaction`, and `vigil-mcp` surfaces.
 
-## 公开 surface
+## Public surface
 
 ```rust
 use vigil_sdk::prelude::*;
@@ -26,11 +27,11 @@ pub use vigil_redaction::{scan_text, RedactionResult, Finding, FindingKind, Find
 pub use vigil_mcp::descriptor_hash;
 ```
 
-## 不在 SDK Phase 1
+## Out of scope (not exported)
 
-- Server runtime(Hub / oracle internals)
-- Backend impl(`NoopEngine` / `MockEngine` / `OrtEngine`)
-- Ops infra(bootstrap / model 分发)
-- `vigil-runner` concrete(`WasmRunner` / `spawn_native`)
+- Server runtime (Hub / oracle internals).
+- Backend implementations (`NoopEngine` / `MockEngine` / `OrtEngine`).
+- Ops infrastructure (bootstrap / model distribution).
+- The concrete `vigil-runner` (`WasmRunner` / `spawn_native`).
 
-详见 [Invariants](./invariants.md) + [docs.rs/vigil-sdk](https://docs.rs/vigil-sdk)。
+See [Invariants](./invariants.md) and [docs.rs/vigil-sdk](https://docs.rs/vigil-sdk).

@@ -1,34 +1,36 @@
 # SDK Feature Flags
 
-## `ort`(default off)
+## `ort` (default: off)
 
 ```toml
-vigil-sdk = { version = "0.13", features = ["ort"] }
+vigil-sdk = { version = "0.1", features = ["ort"] }
 ```
 
-启用后:
-- ort crate + ONNX Runtime 1.24.4 dynamic lib
-- 3-engine ensemble(OpenAI PF + xlmr-pii-v1 + yonigo-pii-v1)
-- 8-class PrivacyLabel
+Enabled:
 
-不启用(default):
-- 13 hard rules
-- NoopEngine 占位
-- 零 ONNX dep,sub-1s startup
+- The `ort` crate + ONNX Runtime 1.24.4 (dynamic library).
+- A 3-engine ensemble (OpenAI Privacy Filter + `xlmr-pii-v1` + `yonigo-pii-v1`).
+- An 8-class `PrivacyLabel`.
 
-## 选择
+Disabled (default):
+
+- 13 hard fingerprint rules.
+- A `NoopEngine` placeholder.
+- No ONNX dependency; sub-second startup.
+
+## Choosing
 
 | Scenario | Feature |
 |---|---|
-| CLI tool wrap | default — 13 hard rules cover 90%+ leak,instant |
-| Long-running agent | `ort` — recall ↑,11s cold + 419ms warm |
-| Browser extension | default — size + cold start sensitive |
+| CLI tool wrapper | default — hard rules cover the vast majority of leaks, instant |
+| Long-running agent | `ort` — higher recall (~11 s cold + ~419 ms warm) |
+| Browser extension | default — size- and cold-start-sensitive |
 
-## Runtime env(if `ort`)
+## Runtime environment (with `ort`)
 
 ```bash
-export ORT_DYLIB_PATH=$HOME/ort/onnxruntime-linux-x64-1.24.4/lib/libonnxruntime.so.1.24.4
-export VIGIL_PRIVACY_FILTER_MODEL_DIR=/var/vigil/models/openai-pf/v1
+export ORT_DYLIB_PATH=/path/to/onnxruntime-<platform>-1.24.4/lib/libonnxruntime.so.1.24.4
+export VIGIL_PRIVACY_FILTER_MODEL_DIR=/path/to/models/openai-pf/v1
 ```
 
-详见 ADR 0012 / 0016 / 0017。
+See ADR 0012, 0016, and 0017.

@@ -2,31 +2,32 @@
 
 ## First launch
 
-启动后窗口默认进 **Activity Feed**(首次为空)。4 个 tabs:
-- Activity Feed / Approval Queue / Server Registry / Session Replay
+The window opens on the **Activity Feed** (empty on first run). There are four tabs:
+Activity Feed, Approval Queue, Server Registry, and Session Replay.
 
-## Connect AI Agent
+## Connect an AI agent
 
-### Claude Code(MCP stdio)
+### Claude Code (MCP stdio)
 
 ```json
 { "mcpServers": { "vigil": { "command": "vigil-hub", "args": ["serve", "--stdio"] } } }
 ```
 
 ### Cursor / Zed / Codex
-同样 `vigil-hub serve --stdio` MCP stdio entry。
 
-### Browser Extension
+The same `vigil-hub serve --stdio` MCP stdio entry point.
 
-Chrome MV3 ext → Native Host → desktop app(stdio MCP)。
+### Browser extension
 
-## Tab 概览
+Chrome MV3 extension → native host → desktop app (stdio MCP).
 
-| Tab | 功能 |
+## Tabs at a glance
+
+| Tab | What it shows |
 |---|---|
-| Activity Feed | 最近 100 events,SQLite FTS5 搜索,hash chain verify |
-| Approval Queue | risky effects 待批准,Approve/Reject/Delegate/Defer |
-| Server Registry | 3 tabs:Active/Pending/Removed,descriptor drift |
-| Session Replay | 选 session_id 看完整决策时间线 |
+| Activity Feed | Recent events, SQLite FTS5 search, hash-chain verification |
+| Approval Queue | Risky effects awaiting a decision — Approve / Reject / Delegate / Defer |
+| Server Registry | Active / Pending / Removed servers, descriptor drift |
+| Session Replay | The full decision timeline for a chosen `session_id` |
 
-详见 [Architecture](../concepts/architecture.md)。
+See [Architecture](../concepts/architecture.md).
