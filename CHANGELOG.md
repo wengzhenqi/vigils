@@ -8,6 +8,31 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.7] — 2026-06-03
+
+Security hardening. Ports the fixes from the project's first comprehensive security audit
+(OWASP Top 10 + STRIDE + supply-chain; score **9.9/10, 0 critical / 0 high**) into the public
+release. No public API or SDK surface change; existing installs auto-update.
+
+### Security
+
+- **Audit-ledger hash chain v2** (VIGIL-SEC-001) — the tamper-evident SHA-256 chain now also
+  binds `session_id`, `event_type`, and `redacted_text`, closing a gap where a local actor
+  with database write access could rewrite those columns undetected. Versioned and
+  backward-compatible: historical v1 events stay verifiable, new events use v2, and
+  `verify_chain` enforces version monotonicity (a v2→v1 downgrade is rejected). See
+  [ADR 0002](docs/adr/0002-audit-ledger.md).
+- **Descriptor-hash validation** (VIGIL-SEC-004) — the MCP descriptor oracle fail-closes a
+  malformed incoming hash to `FirstSeen` (approval-required) instead of trusting it.
+- **Reserved allowlist-key guard** (VIGIL-SEC-005) — the firewall protects a *set* of reserved
+  policy keys rather than a single literal.
+- **Browser-extension sender check** (VIGIL-SEC-006) — the background service worker validates
+  `sender.id === chrome.runtime.id` on inbound messages.
+
+Full report: [docs/security/SECURITY-AUDIT-2026-06-03.md](docs/security/SECURITY-AUDIT-2026-06-03.md).
+
+---
+
 ## [v0.1.6] — 2026-06-03
 
 In-app branding consistency. The desktop UI showed "Vigil" (singular) in its title, sidebar

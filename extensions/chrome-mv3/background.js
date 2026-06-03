@@ -304,6 +304,12 @@ setInterval(() => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || typeof msg.type !== "string") return false;
 
+    // VIGIL-SEC-006(security audit defense-in-depth):只接受本扩展自身(content scripts /
+    // popup / options)的消息。manifest 无 externally_connectable,web 页本就无法 sendMessage;
+    // 此守门把该信任假设显式化,防止未来误加 externally_connectable 后外部 web 源操纵 tier /
+    // 豁免状态。sender.id 由 Chrome 运行时填充,不可由发送方伪造。
+    if (!sender || sender.id !== chrome.runtime.id) return false;
+
     // α1 基线 + α4 豁免短路:content-script → Host check
     if (msg.type === "vigil_check") {
         // α4:tab_id 来自 sender.tab.id(chrome 运行时元数据,不伪造);

@@ -380,6 +380,15 @@ impl Ledger {
         tool_name: &str,
         descriptor_hash: &str,
     ) -> Result<PinOutcome> {
+        // VIGIL-SEC-004:拒绝**空** descriptor_hash 入库 —— 空 pin 会与空 call hash 相等而经
+        // oracle 的 `h == hash` 走 ApprovedStable 自动放行(audit 头号关注的具体利用)。
+        // 运行时的完整格式 fail-closed 由 oracle 端 `is_valid_descriptor_hash`(非 64-hex incoming
+        // → FirstSeen)承担,故此处只拒空,不强制 64-hex —— 避免破坏用短假 hash 测状态机的单测。
+        if descriptor_hash.is_empty() {
+            return Err(AuditError::InvalidInput {
+                reason: "descriptor_hash must not be empty",
+            });
+        }
         let guard = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
         let now = crate::ledger::now_secs();
 

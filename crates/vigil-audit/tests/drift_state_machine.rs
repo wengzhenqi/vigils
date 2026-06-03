@@ -61,6 +61,18 @@ fn pin_outcome_first_seen_then_unchanged() {
     assert!(matches!(o2, PinOutcome::Unchanged));
 }
 
+/// VIGIL-SEC-004:pin 拒绝**空** descriptor_hash —— 空 pin 会与空 call hash 相等而经 oracle
+/// 走 ApprovedStable 自动放行(运行时完整格式守门在 oracle 端)。非空(含短假 hash)仍允许。
+#[test]
+fn pin_rejects_empty_descriptor_hash() {
+    let l = setup();
+    assert!(matches!(
+        l.pin_tool_descriptor("fs", "read", "").unwrap_err(),
+        AuditError::InvalidInput { .. }
+    ));
+    assert!(l.pin_tool_descriptor("fs", "read", "h1").is_ok());
+}
+
 /// §12.3 I05-3:descriptor 变化触发再审批
 #[test]
 fn pin_outcome_drifted_triggers_reapproval() {

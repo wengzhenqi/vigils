@@ -280,7 +280,17 @@ impl Firewall {
     ) -> Result<FirewallOutcome, FirewallError> {
         // 0) **R2 R1 新发现 3 修复** —— reserved-key guard 在 preflight **之前**。
         //    配置错误时不应先扫描并落 redaction 审计副作用。
-        if self.config.allowed_scopes.contains_key("allowed_hosts") {
+        //
+        // VIGIL-SEC-005(security audit):allowed_scopes 与 allowed_hosts 共用 ctx.allowlists
+        // 同一 map,后写覆盖。用**保留键集合**守门(而非单一字面量),未来引擎新增固定 allowlist
+        // 键时只需扩 RESERVED_ALLOWLIST_KEYS,不会因约定遗忘而被 allowed_scopes 静默覆盖。
+        const RESERVED_ALLOWLIST_KEYS: &[&str] = &["allowed_hosts"];
+        if self
+            .config
+            .allowed_scopes
+            .keys()
+            .any(|k| RESERVED_ALLOWLIST_KEYS.contains(&k.as_str()))
+        {
             return Err(FirewallError::ReservedScopeKey);
         }
 

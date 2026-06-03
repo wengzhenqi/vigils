@@ -511,6 +511,158 @@ fn tamper_on_other_fields_also_detected() {
     }
 }
 
+/// (14.5) VIGIL-SEC-001:v2 摘要把 `session_id` / `event_type` / `redacted_text` 纳入,
+/// 这三列的部分篡改(本地具 DB 写权限者)现在会被 `verify_chain` 检测 —— 闭合 security
+/// audit 发现的缺口(此前这三列在摘要之外,改写它们 verify 检测不到)。
+#[test]
+fn tamper_v2_bound_fields_detected() {
+    fn setup() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ledger.db");
+        {
+            let l = Ledger::open(&path).unwrap();
+            let sid = l.start_session("test", None).unwrap();
+            l.append_event(&sid, "a", &json!({"n": 1}), Some("summary-1"))
+                .unwrap();
+            l.append_event(&sid, "b", &json!({"n": 2}), Some("summary-2"))
+                .unwrap();
+            l.verify_chain().unwrap();
+        }
+        (dir, path)
+    }
+
+    // 1) session_id 篡改(把事件移出某 session 回放)
+    {
+        let (_dir, path) = setup();
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE events SET session_id = 'other-session' WHERE event_id = 1",
+                [],
+            )
+            .unwrap();
+        let l = Ledger::open(&path).unwrap();
+        assert!(matches!(
+            l.verify_chain().unwrap_err(),
+            AuditError::ChainBroken { event_id: 1 }
+        ));
+    }
+    // 2) event_type 篡改(翻转事件类型)
+    {
+        let (_dir, path) = setup();
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE events SET event_type = 'forged' WHERE event_id = 1",
+                [],
+            )
+            .unwrap();
+        let l = Ledger::open(&path).unwrap();
+        assert!(matches!(
+            l.verify_chain().unwrap_err(),
+            AuditError::ChainBroken { event_id: 1 }
+        ));
+    }
+    // 3) redacted_text 篡改(改写 FTS/UI 显示的脱敏摘要)
+    {
+        let (_dir, path) = setup();
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "UPDATE events SET redacted_text = 'rewritten' WHERE event_id = 1",
+                [],
+            )
+            .unwrap();
+        let l = Ledger::open(&path).unwrap();
+        assert!(matches!(
+            l.verify_chain().unwrap_err(),
+            AuditError::ChainBroken { event_id: 1 }
+        ));
+    }
+}
+
+/// (14.6) VIGIL-SEC-001 版本化:历史 v1 事件(chain_version=1)仍按 v1 摘要验证 ——
+/// 迁移不破坏旧链;v1 genesis 之后接 v2 事件的混合链整体可验证(realistic 升级路径)。
+#[test]
+fn legacy_v1_event_and_mixed_chain_verify() {
+    use vigil_audit::hash::{compute_event_hash, compute_event_hash_v2};
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+
+    // Ledger::open 建 schema(含 chain_version)+ migration
+    {
+        Ledger::open(&path).unwrap();
+    }
+
+    // 手动插入一条 v1 genesis 事件(模拟本次修复前写入的历史事件)
+    let p1 = json!({"legacy": true});
+    let t1 = 1_700_000_000i64;
+    let h1 = compute_event_hash("", &p1, t1).unwrap();
+    // 在 v1 之后链入一条 v2 事件(prev = h1)
+    let p2 = json!({"n": 2});
+    let t2 = 1_700_000_001i64;
+    let h2 = compute_event_hash_v2(&h1, &p2, t2, "sess-new", "new.event", Some("sum")).unwrap();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO events (session_id, event_type, payload_json, redacted_text, prev_hash, event_hash, created_at, chain_version)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,1)",
+            rusqlite::params!["legacy-sess", "legacy.event", serde_json::to_string(&p1).unwrap(), Option::<String>::None, "", h1, t1],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO events (session_id, event_type, payload_json, redacted_text, prev_hash, event_hash, created_at, chain_version)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,2)",
+            rusqlite::params!["sess-new", "new.event", serde_json::to_string(&p2).unwrap(), Some("sum"), h1, h2, t2],
+        ).unwrap();
+    }
+
+    // 混合 v1->v2 链整体可验证
+    let l = Ledger::open(&path).unwrap();
+    l.verify_chain()
+        .expect("mixed v1(genesis) -> v2 chain must verify (versioned dispatch, no historical break)");
+}
+
+/// (14.7) VIGIL-SEC-001 R1(Codex BLOCKER):chain_version 必须单调非降。v2 事件之后
+/// 出现 v1 行 = 降级攻击(攻击者把 v2 行改 chain_version=1 + 重算 v1 hash,以绕开
+/// session_id/event_type/redacted_text 绑定),即使 v1 hash 本身有效也必须 ChainBroken。
+#[test]
+fn v2_then_v1_rejected_as_downgrade() {
+    use vigil_audit::hash::{compute_event_hash, compute_event_hash_v2};
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.db");
+    {
+        Ledger::open(&path).unwrap();
+    }
+
+    // event 1:v2 genesis;event 2:v1,正确链入(prev = h1),v1 hash 本身有效
+    let p1 = json!({"n": 1});
+    let t1 = 1_700_000_000i64;
+    let h1 = compute_event_hash_v2("", &p1, t1, "s1", "e1", None).unwrap();
+    let p2 = json!({"n": 2});
+    let t2 = 1_700_000_001i64;
+    let h2 = compute_event_hash(&h1, &p2, t2).unwrap();
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO events (session_id,event_type,payload_json,redacted_text,prev_hash,event_hash,created_at,chain_version) VALUES (?1,?2,?3,?4,?5,?6,?7,2)",
+            rusqlite::params!["s1", "e1", serde_json::to_string(&p1).unwrap(), Option::<String>::None, "", h1, t1],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO events (session_id,event_type,payload_json,redacted_text,prev_hash,event_hash,created_at,chain_version) VALUES (?1,?2,?3,?4,?5,?6,?7,1)",
+            rusqlite::params!["s1", "e1", serde_json::to_string(&p2).unwrap(), Option::<String>::None, h1, h2, t2],
+        ).unwrap();
+    }
+
+    let l = Ledger::open(&path).unwrap();
+    // 即使 event 2 的 v1 hash 有效,单调性守门仍因 v2->v1 降级而拒(event_id=2)
+    assert!(matches!(
+        l.verify_chain().unwrap_err(),
+        AuditError::ChainBroken { event_id: 2 }
+    ));
+}
+
 /// (15) span_drop_failures 正常路径恒为 0。
 /// 若未来 Drop 兜底失败,计数器应可被 caller 读到(可观察性)。
 #[test]

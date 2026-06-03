@@ -13,7 +13,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::error::{AuditError, Result};
-use crate::hash::compute_event_hash;
+use crate::hash::{compute_event_hash, compute_event_hash_v2, CURRENT_CHAIN_VERSION};
 
 const SCHEMA_SQL: &str = include_str!("schema.sql");
 
@@ -48,6 +48,10 @@ const COLUMN_MIGRATIONS: &[(&str, &str, &str)] = &[
     // nullable —— legacy 行(列新增前的审批)NULL,首次本机 spawn 建立基线(见 §3.2 4 护栏)。
     ("server_profiles", "resolved_program_path", "TEXT"),
     ("server_profiles", "pending_resolved_program_path", "TEXT"),
+    // VIGIL-SEC-001(security audit 2026-06-03):per-event chain 版本。legacy 行(列新增
+    // 前写入)DEFAULT 1 → 按 v1 摘要验证(历史链不破);新事件显式写 CURRENT_CHAIN_VERSION(2)
+    // → v2 摘要额外绑定 session_id/event_type/redacted_text。verify_chain 按本列分派。
+    ("events", "chain_version", "INTEGER NOT NULL DEFAULT 1"),
 ];
 
 fn apply_column_migrations(conn: &Connection) -> Result<()> {
@@ -314,11 +318,13 @@ impl Ledger {
             )
             .unwrap_or_default(); // 表空 → genesis("")
 
-        let event_hash = compute_event_hash(&prev_hash, payload, now)?;
+        // VIGIL-SEC-001:新事件用 v2 摘要(额外绑定 session_id/event_type/redacted_text)。
+        let event_hash =
+            compute_event_hash_v2(&prev_hash, payload, now, session_id, event_type, redacted_text)?;
 
         tx.execute(
-            "INSERT INTO events (session_id, event_type, payload_json, redacted_text, prev_hash, event_hash, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO events (session_id, event_type, payload_json, redacted_text, prev_hash, event_hash, created_at, chain_version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 session_id,
                 event_type,
@@ -327,6 +333,7 @@ impl Ledger {
                 prev_hash,
                 event_hash,
                 now,
+                CURRENT_CHAIN_VERSION,
             ],
         )?;
         let event_id = tx.last_insert_rowid();
@@ -377,10 +384,15 @@ impl Ledger {
     }
 
     /// 校验整条 hash chain。发现第一个不一致即返回 `ChainBroken`。
+    ///
+    /// VIGIL-SEC-001:按每事件存储的 `chain_version` 分派摘要复算 —— v1 历史事件按 v1
+    /// 验证(不破坏旧链),v2 事件用 v2 摘要(额外把 session_id/event_type/redacted_text
+    /// 纳入复算,因此这三列的部分篡改会被检测)。
     pub fn verify_chain(&self) -> Result<()> {
         let guard = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
         let mut stmt = guard.prepare(
-            "SELECT event_id, payload_json, prev_hash, event_hash, created_at FROM events ORDER BY event_id",
+            "SELECT event_id, payload_json, prev_hash, event_hash, created_at, session_id, event_type, redacted_text, chain_version
+             FROM events ORDER BY event_id",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((
@@ -389,19 +401,46 @@ impl Ledger {
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, i64>(8)?,
             ))
         })?;
 
         let mut expected_prev = String::new();
+        // VIGIL-SEC-001 R1(Codex):chain_version 必须**单调非降**(合法升级链是 v1*→v2*)。
+        // 否则攻击者可把一条 v2 行降级回 chain_version=1 + 重算 v1 hash(v1 摘要不含
+        // session_id/event_type/redacted_text)→ 重新获得篡改这三列的能力。一旦见过更高
+        // 版本,后续出现更低版本即 ChainBroken。
+        let mut min_version: i64 = 1;
         for r in rows {
-            let (event_id, payload_json, prev_hash, event_hash, created_at) = r?;
+            let (event_id, payload_json, prev_hash, event_hash, created_at, session_id, event_type, redacted_text, chain_version) =
+                r?;
             if prev_hash != expected_prev {
                 return Err(AuditError::ChainBroken { event_id });
             }
+            if chain_version < min_version {
+                // 版本回滚(downgrade)→ fail-closed
+                return Err(AuditError::ChainBroken { event_id });
+            }
+            min_version = min_version.max(chain_version);
             // 解析 payload 做一次 hash 复算
             let payload: Value = serde_json::from_str(&payload_json)
                 .map_err(|_| AuditError::ChainBroken { event_id })?;
-            let recomputed = compute_event_hash(&prev_hash, &payload, created_at)?;
+            let recomputed = match chain_version {
+                1 => compute_event_hash(&prev_hash, &payload, created_at)?,
+                2 => compute_event_hash_v2(
+                    &prev_hash,
+                    &payload,
+                    created_at,
+                    &session_id,
+                    &event_type,
+                    redacted_text.as_deref(),
+                )?,
+                // 未知/未来版本 → fail-closed(不静默接受)
+                _ => return Err(AuditError::ChainBroken { event_id }),
+            };
             if recomputed != event_hash {
                 return Err(AuditError::ChainBroken { event_id });
             }

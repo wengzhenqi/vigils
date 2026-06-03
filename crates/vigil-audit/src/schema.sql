@@ -20,7 +20,10 @@ CREATE TABLE IF NOT EXISTS events (
   redacted_text TEXT,             -- 供 FTS5 搜索的已脱敏摘要
   prev_hash     TEXT NOT NULL,    -- 空串表示 genesis
   event_hash    TEXT NOT NULL,    -- sha256(...) hex-lower
-  created_at    INTEGER NOT NULL
+  created_at    INTEGER NOT NULL,
+  -- VIGIL-SEC-001:chain 摘要版本。1=v1(legacy,仅 prev/payload/created_at);
+  -- 2=v2(额外绑定 session_id/event_type/redacted_text)。新事件写 2;verify_chain 按列分派。
+  chain_version INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
