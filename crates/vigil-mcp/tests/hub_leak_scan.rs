@@ -3,8 +3,9 @@
 //! 验证 `Hub::handle_request("tools/call")` 走完 firewall + scope 快路径后,
 //! 在 `invoke_upstream` 的 `Ok(result)` 分支对 upstream response 做 alias-agnostic
 //! 硬指纹扫描:
-//! - 命中 → `leak_detected_count` +1,写 `secret.leak_detected` 审计事件,**不改**
-//!   返给 agent 的 result(out-of-band 设计)
+//! - 命中 → `leak_detected_count` +1,写 `secret.leak_detected` 审计事件;默认
+//!   (`redact_tool_results=false`)**不改**返给 agent 的 result(out-of-band);
+//!   flag 开则 **in-band** 脱敏 result(键+值)再返回(可逆脱敏 Slice 1 hook c)
 //! - 未命中 → 计数器不变,无 `secret.leak_detected` 事件
 //!
 //! 测试用 `MockUpstream` 替代真实 stdio / http transport,直接注入预设 response。
@@ -71,6 +72,14 @@ impl McpUpstream for MockUpstream {
 /// 构造一个 Hub + ledger + mock upstream,且预先注入一条 ToolRoute + session scope
 /// Approved 记录,让 `tools/call` 能直接走 scope 快路径进 `invoke_upstream`。
 fn setup_with_mock(canned: Value) -> (Arc<Ledger>, Arc<Hub>, String) {
+    setup_with_mock_cfg(canned, false)
+}
+
+/// 同 `setup_with_mock`,但可指定 `redact_tool_results`(可逆脱敏 Slice 1:in-band 结果脱敏)。
+fn setup_with_mock_cfg(
+    canned: Value,
+    redact_tool_results: bool,
+) -> (Arc<Ledger>, Arc<Hub>, String) {
     let l = Arc::new(Ledger::open_in_memory().unwrap());
     let policy = PolicyEngine::new(default_ruleset());
     let fw = Arc::new(Firewall::new(
@@ -90,8 +99,10 @@ fn setup_with_mock(canned: Value) -> (Arc<Ledger>, Arc<Hub>, String) {
         oracle,
         HubConfig {
             approval_wait: Duration::from_millis(200),
+            redact_tool_results,
             ..Default::default()
         },
+        vigil_mcp::SecretAliasMap::default(),
     ));
 
     // 注册并审批 server(command_hash 必须与 argv 实际 hash 对齐,否则 attach_upstream 拒)
@@ -249,5 +260,63 @@ fn post_exec_leak_does_not_modify_response_to_agent() {
         "post-exec leak 是 out-of-band,不得改变返给 agent 的 result"
     );
     // 计数器证明扫描确实跑了
+    assert_eq!(hub.leak_detected_count(), 1);
+}
+
+/// 可逆脱敏 Slice 1:`redact_tool_results=true` 时,命中 leak 的 result 被 **in-band** 脱敏后
+/// 才返回 agent —— 原始 ghp_ token 不再出现在返给 agent 的 result 里(堵住工具输出把 secret
+/// 回吐给远端 LLM)。与 Test C(默认 out-of-band 不改 result)构成正反对照。
+#[test]
+fn post_exec_leak_redacts_response_when_flag_on() {
+    let raw = "ghp_1234567890abcdef1234567890abcdef12345678";
+    let canned = json!({
+        "content": format!("leaked: {raw}"),
+        "ok": true
+    });
+    let (_l, hub, _sid) = setup_with_mock_cfg(canned, true);
+
+    let resp = call_tool(&hub);
+    assert!(resp.error.is_none(), "upstream 正常返 Ok");
+    let result = resp.result.as_ref().unwrap();
+    let result_str = serde_json::to_string(result).unwrap();
+
+    // 核心:原始 token 不得出现在返给 agent 的 result 里
+    assert!(
+        !result_str.contains(raw),
+        "redact_tool_results=true 时 result 不得含原始 secret,实际: {result_str}"
+    );
+    // 应被占位符化(redact 产 [REDACTED ...])
+    assert!(
+        result_str.contains("[REDACTED"),
+        "result 应含 [REDACTED ...] 占位符,实际: {result_str}"
+    );
+    // 扫描仍跑了(计数器 +1);非敏感字段 "ok" 仍在
+    assert_eq!(hub.leak_detected_count(), 1);
+    assert!(
+        result_str.contains("\"ok\""),
+        "非敏感字段应保留: {result_str}"
+    );
+}
+
+/// Codex review NEEDS-FIX 回归:secret 落在 JSON **key 位** 时也必须被脱敏。
+/// `redact(&Value)` 只脱敏 object **值**、保留键,会漏 key 位 secret;Hub 改用序列化串
+/// `scrub_text` 重解析覆盖键位。flag 开时,key 位原始 token 不得出现在返给 agent 的 result。
+#[test]
+fn post_exec_leak_redacts_secret_in_object_key_when_flag_on() {
+    let raw = "ghp_1234567890abcdef1234567890abcdef12345678";
+    // secret 作为 object KEY(而非 value)
+    let mut obj = serde_json::Map::new();
+    obj.insert(raw.to_string(), json!("ok"));
+    obj.insert("note".to_string(), json!("v"));
+    let canned = Value::Object(obj);
+
+    let (_l, hub, _sid) = setup_with_mock_cfg(canned, true);
+    let resp = call_tool(&hub);
+    assert!(resp.error.is_none());
+    let result_str = serde_json::to_string(resp.result.as_ref().unwrap()).unwrap();
+    assert!(
+        !result_str.contains(raw),
+        "key 位 secret 也不得透传给 agent,实际: {result_str}"
+    );
     assert_eq!(hub.leak_detected_count(), 1);
 }

@@ -27,6 +27,11 @@ vigil-runner-types = { path = "../vigil-runner-types", version = "0.1.0" }
 # vigil-ui-protocol 自身只依赖 vigil-types / vigil-audit / vigil-runner,
 # 与 vigil-mcp 现有 deps 无循环。
 vigil-ui-protocol = { path = "../vigil-ui-protocol", version = "0.1.0" }
+# 可逆脱敏 Slice 2:复用 `SecretValue`(Zeroizing/non-Debug/单一 expose)的值卫生装
+# Hub-owned `SecretAliasMap`。**只取值包装**,不引 LeaseBroker 审批门控语义(设计 D2:
+# broker mint-time 3-tuple 绑定与"运行时选 tool"现实冲突)。不启 os-keychain feature
+# —— keyring 读取在 vigil-hub-cli(已带该 feature)。
+vigil-lease = { path = "../vigil-lease", version = "0.1.0" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }

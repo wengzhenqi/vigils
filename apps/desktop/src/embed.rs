@@ -10,7 +10,7 @@
 //! - **不**改 ApprovalBroker 路径(继续 ISS-019 Phase 1 短轮询 fallback,
 //!   `crates/vigil-audit/src/approvals.rs::wait_for_resolution` 0 触碰)
 //! - **不**复用 `apps/vigil-hub-cli/src/serve.rs::build_hub`,因为它内部 `Ledger::open`
-//!   会与 `apps/desktop/src/bin/vigils.rs` 已经 single-open 的 ledger 冲突
+//!   会与 `apps/desktop/src/bin/gui.rs` 已经 single-open 的 ledger 冲突
 //!
 //! # ADR 0014 §3.4 fail-closed 不变量
 //!
@@ -52,7 +52,7 @@ use thiserror::Error;
 use vigil_audit::{AuditError, Ledger};
 use vigil_firewall::scorer::{DescriptorOracle, DescriptorStatus, StaticDescriptorOracle};
 use vigil_firewall::{Firewall, FirewallConfig};
-use vigil_mcp::{Hub, HubConfig, HubError};
+use vigil_mcp::{Hub, HubConfig, HubError, SecretAliasMap};
 use vigil_policy::{defaults::default_ruleset, PolicyEngine};
 
 /// embed Hub 组装失败原因。
@@ -103,6 +103,9 @@ pub fn gui_build_hub(ledger: Arc<Ledger>) -> Result<Arc<Hub>, EmbedError> {
         firewall,
         oracle,
         HubConfig::default(),
+        // Desktop embed 暂不声明 `secret://` alias(可逆脱敏 Slice 2 走 CLI serve 配置路径);
+        // 空 map = fail-closed(任何 `secret://x` 引用都 deny)。Desktop 审批门控 minting 留后续。
+        SecretAliasMap::default(),
     ));
 
     // 5. 开 session —— GUI bin 启动即等价于 "用户开始使用 vigil-desktop GUI"

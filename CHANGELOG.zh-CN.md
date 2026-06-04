@@ -8,6 +8,25 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.10] — 2026-06-05
+
+零设置的 `vigil-hub demo` 首次体验,以及工具边界的可逆 secret 脱敏。已安装版本经 OTA 自动升级。
+
+### 新增
+
+- **`vigil-hub demo` —— 60 秒看到价值,零设置。** 一条命令让一个 planted 场景跑过 Vigils 的**真实运行时
+  代码**(防火墙 · 可逆脱敏 · 防篡改审计),不联系任何 LLM、不需账号/key/网络:agent 直传裸 secret 被拒;
+  改传 `secret://alias` 占位符后往返 —— 远端模型只见占位符,而本地工具收到真值;工具结果泄漏的 secret 被
+  再脱敏;审计账本被证明零明文。`--tamper` 篡改账本一行,真实 verify-chain 检测到 —— 你亲手跑的可证伪。
+- **可逆脱敏 —— 工具边界 `secret://alias` detokenize。** 在 upstream 配置里声明 secret alias
+  (`env:`/`keyring:`,限定 server);agent 传 `secret://<alias>`(远端模型从不见真值),Vigils 只在本地工具
+  执行边界替换成真值。未声明/跨 server/alias 里塞裸 secret 一律 fail-closed(拒)。工具结果泄漏 secret 在回
+  模型前被再脱敏(opt-in `--redact-tool-results`)。不可信 alias 文本绝不回显进错误。
+
+### 变更
+
+- README 顶部新增 **"60 秒体验"** 区。
+
 ## [v0.1.9] — 2026-06-04
 
 Chrome 扩展新增手动输入脱敏守门,并改进 release 下载体验。已安装版本经 OTA 自动升级。

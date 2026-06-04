@@ -20,8 +20,11 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use vigil_audit::{Ledger, ResolvedProgramOutcome};
+// 可逆脱敏 Slice 2:`secret://<alias>` → 真值映射只复用 `SecretValue` 值包装
+// (Zeroizing/non-Debug/单一 expose),不引 LeaseBroker 审批门控语义(设计 D2)。
 use vigil_firewall::scorer::DescriptorOracle;
 use vigil_firewall::{Firewall, FirewallOutcome, OAuthScopeContext};
+use vigil_lease::SecretValue;
 use vigil_types::{
     ApprovalStatus, DecisionKind, DecisionRecord, EffectKind, EffectVector, ToolInvocation,
 };
@@ -105,6 +108,16 @@ pub struct HubConfig {
     /// **开发模式**:tools/list 首次见到的 descriptor 自动批准(AGENTS §5 默认 false)。
     /// 生产必须保持 false,由 UI(I08)触发显式 approve_tool_descriptor。
     pub auto_approve_first_seen_tools: bool,
+    /// 可逆脱敏 Slice 1(reversible-redaction round-trip 的"结果再脱敏"半边):
+    /// 开启后,上游工具响应里命中硬指纹 secret 时,**in-band** 对 result 做 `redact`
+    /// 后再返回 agent/LLM(堵住工具输出把 secret 回吐给远端模型),而非默认的
+    /// out-of-band(仅审计 `leak_detected_count`、保持 MCP 协议透明)。
+    ///
+    /// 默认 `false` 保持既有透明行为 + 向后兼容。触发条件是命中**硬指纹**(ISS-016 泄漏类);
+    /// 命中后对**序列化 result**(键+值全覆盖)做 `scrub_text` 再重解析(`redact(&Value)` 只脱敏
+    /// 值会漏 key 位 secret;重解析失败则 fail-closed 整体占位,绝不透传原文)。
+    /// 见 docs/research/reversible-redaction-research.md hook (c)。
+    pub redact_tool_results: bool,
 }
 
 impl Default for HubConfig {
@@ -115,6 +128,7 @@ impl Default for HubConfig {
             upstream_call_timeout: Duration::from_secs(30),
             outbox_enabled: true,
             auto_approve_first_seen_tools: false,
+            redact_tool_results: false,
         }
     }
 }
@@ -128,6 +142,163 @@ pub const EVENT_RAW_SECRET_ATTEMPT_DETECTED: &str = "raw_secret_attempt_detected
 /// lease.` 是保留前缀),因此合法。本事件是 **out-of-band** —— 不改变返给 agent 的
 /// result,只在审计链上留痕 + 累加 `Hub::leak_detected_count()`。
 pub const EVENT_SECRET_LEAK_DETECTED: &str = "secret.leak_detected";
+
+/// 可逆脱敏 Slice 2:agent 在 tool args 里引用了**无法解析**的 `secret://<alias>`
+/// (未声明 / 跨 server 越权 / 落 object key 位)被决策前门 fail-closed deny 时的审计事件。
+/// `secret.` 非保留前缀(见 [`EVENT_SECRET_LEAK_DETECTED`]),合法。payload 只带 alias 名
+/// (非密钥)+ 关联 id,**绝无**裸值 —— 解析失败时本就无值可暴露。
+pub const EVENT_SECRET_ALIAS_UNRESOLVED: &str = "secret.alias_unresolved";
+
+/// 可逆脱敏 Slice 2:`secret://<alias>` 解析失败原因。
+///
+/// 在**决策前门**(`scan_args_for_raw_secrets` 之后)做校验时用 —— 任一非 `Ok` 都 fail-closed
+/// **deny**(绝不把字面 `secret://...` 或裸值透传给上游;一个能活到上游的字面占位符必是伪造或
+/// 过期引用,设计 D4)。同一类型也在 `invoke_upstream` 的 detokenize 兜底里用(校验已过,理论
+/// 不会到,但仍 fail-closed)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AliasResolveError {
+    /// 引用了**未声明**的 alias。
+    ///
+    /// ⚠️ Code R1 High 修复:`alias` body 是不可信 tool 输入,**可能被塞入真 secret**
+    /// (`secret://ghp_REALTOKEN` 经 `strip_aliases` 豁免了 raw-secret 门 → 落到这里)。故
+    /// **绝不**把 `alias` 原文写进 reason / 审计 / JSON-RPC 错误 —— `reason()` 只输出 sha256 短前缀
+    /// (单向,operator 可对自己配置里的 alias 名做同样 hash 来关联,secret 不泄漏给 LLM)。
+    Unknown {
+        /// 未知 alias 原文(**仅内部**;`reason()` 只暴露其 sha256 前缀)。
+        alias: String,
+    },
+    /// alias 被限定到**别的** server(跨 server 解析 —— H5 oracle 防御)。
+    ///
+    /// 注:此变体下 `alias` 必然命中 map(operator 声明的配置名,非攻击者裸输入),故 `reason()`
+    /// 回显其名是安全的。
+    CrossServer {
+        /// 被引用的 alias 名(已声明 → 安全可显)。
+        alias: String,
+        /// 声明时限定的 server(非本次 route 的 server)。
+        declared_server: String,
+    },
+    /// `secret://` token body 本身命中硬指纹(`secret://ghp_...`)—— 即把真 secret 伪装成 alias 引用
+    /// 想绕过 raw-secret 门。Code R1 High 修复:显式拒为**裸 secret 走私**,reason **不回显**任何内容。
+    RawSecretInAlias,
+    /// object **key** 里出现 `secret://`(Slice 2 不支持改写 key → 拒绝,设计 refinement)。
+    KeyPosition,
+}
+
+impl AliasResolveError {
+    /// 给审计/错误/JSON-RPC 用的稳定 reason 串。
+    ///
+    /// **不变量(Code R1 High)**:绝不含任何**不可信** alias 原文或裸值 —— `Unknown` 用 sha256 前缀,
+    /// `RawSecretInAlias` 完全不回显,`CrossServer` 的 alias 是已声明配置名(安全)。同一串既进本地审计
+    /// (再过 `redact`)也进**回给 agent/LLM** 的 JSON-RPC 错误,故必须在源头就安全。
+    fn reason(&self) -> String {
+        match self {
+            AliasResolveError::Unknown { alias } => format!(
+                "unknown secret alias (sha256:{}) — not declared in upstreams config",
+                alias_sha256_prefix(alias)
+            ),
+            AliasResolveError::CrossServer {
+                alias,
+                declared_server,
+            } => format!(
+                "secret alias `{alias}` is scoped to server `{declared_server}`, \
+                 not the server targeted by this call (cross-server resolution denied)"
+            ),
+            AliasResolveError::RawSecretInAlias => {
+                "raw secret detected in secret:// alias position; reference a declared alias name, \
+                 not a literal secret"
+                    .to_string()
+            }
+            AliasResolveError::KeyPosition => {
+                "secret:// alias in an object key is unsupported".to_string()
+            }
+        }
+    }
+}
+
+/// 对不可信 alias body 取 sha256 hex 短前缀(12 字符,单向不可逆),供错误/审计**关联**而**不泄漏**原文。
+fn alias_sha256_prefix(alias: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(alias.as_bytes());
+    hex::encode(h.finalize())[..12].to_string()
+}
+
+/// 单条 alias 声明的运行时表示:真值 + 限定 server。
+///
+/// Slice 2 默认**每个 alias 必须限定 server**(设计 D1 强制 server scope,最小注入面);
+/// 故 `server` 非 `Option`。
+///
+/// `SecretValue` 自带**脱敏 Debug**(只显 len,见 ADR 0006),故 `AliasEntry` 可安全 derive
+/// `Debug` 而不泄漏真值。
+#[derive(Debug)]
+struct AliasEntry {
+    /// 真值(Zeroizing/non-Debug,唯一暴露点 `expose()`)。
+    value: SecretValue,
+    /// 限定的上游 server_id —— 解析时必须等于本次 `route.server_id`。
+    server: String,
+}
+
+/// 可逆脱敏 Slice 2:Hub 自持的 `secret://<alias>` → 真值映射(**运行时 only**,绝不入账本)。
+///
+/// 复用 `vigil_lease::SecretValue` 的值卫生,**不**借 I06 审批门控 `LeaseBroker`(其 mint-time
+/// 3-tuple `(session,server,tool)` 绑定与"agent 运行时才选 tool"现实冲突,且审批/zeroize/audit
+/// 机制对 CLI 启动期声明的 alias 过重 —— 设计 D2)。从 `upstreams.json` 的 `secrets` map 在
+/// `build_hub` 期填充(env:/keyring: 源;拒 literal:)。
+///
+/// **fail-closed 默认**:空 map(未声明任何 alias)下任何 `secret://x` 引用都解析为 `Unknown` →
+/// deny,故 `Default::default()` 是安全的(test / 无 secrets 配置路径)。
+///
+/// `Debug` 经 `AliasEntry`→`SecretValue` 的脱敏 Debug 链,只显 len 不泄真值。
+#[derive(Debug, Default)]
+pub struct SecretAliasMap {
+    /// alias 名 → (真值, 限定 server)。
+    entries: HashMap<String, AliasEntry>,
+}
+
+impl SecretAliasMap {
+    /// 声明一条 server-scoped alias(供 `build_hub` 装配用)。
+    ///
+    /// 同名后插覆盖(配置里同 alias 重复声明 → 后者生效;调用方应在配置解析层先去重/报错)。
+    pub fn insert(
+        &mut self,
+        alias: impl Into<String>,
+        value: SecretValue,
+        server: impl Into<String>,
+    ) {
+        self.entries.insert(
+            alias.into(),
+            AliasEntry {
+                value,
+                server: server.into(),
+            },
+        );
+    }
+
+    /// 解析 `alias` 在 `server_id` 上下文下的真值引用。
+    ///
+    /// 返回 `&SecretValue`(**未** `expose()` —— 持引用不泄漏明文,故决策前门可安全调用做校验,
+    /// 真正取裸值只在 `invoke_upstream` 的 detokenize seam 调 `.expose()`)。alias body 本身命中硬指纹
+    /// → `RawSecretInAlias`(裸 secret 走私);未声明 → `Unknown`;声明但限定到别的 server → `CrossServer`。
+    ///
+    /// validate 与 detokenize **共用**此唯一解析点,故硬指纹拒绝/scope 校验一处守双路径(DRY)。
+    fn resolve(&self, alias: &str, server_id: &str) -> Result<&SecretValue, AliasResolveError> {
+        // Code R1 High:`secret://ghp_REALTOKEN` 经 `strip_aliases` 豁免了 raw-secret 门 → alias body
+        // 实为真 secret。显式拒为走私(reason 不回显原文),而非当"未知 alias"(后者会 sha256 化但
+        // 语义模糊)。
+        if vigil_redaction::detect_hard_secret(alias).is_some() {
+            return Err(AliasResolveError::RawSecretInAlias);
+        }
+        match self.entries.get(alias) {
+            None => Err(AliasResolveError::Unknown {
+                alias: alias.to_string(),
+            }),
+            Some(entry) if entry.server != server_id => Err(AliasResolveError::CrossServer {
+                alias: alias.to_string(),
+                declared_server: entry.server.clone(),
+            }),
+            Some(entry) => Ok(&entry.value),
+        }
+    }
+}
 
 /// Vigil Hub。
 pub struct Hub {
@@ -143,6 +314,10 @@ pub struct Hub {
     attach_lock: Mutex<()>,
     config: HubConfig,
     session_id: Mutex<Option<String>>,
+    /// 可逆脱敏 Slice 2:`secret://<alias>` → 真值映射(运行时 only,绝不入账本)。
+    /// `build_hub` 从 `upstreams.json` 的 `secrets` map 填充;空 map = fail-closed
+    /// (任何 `secret://x` 引用都 `Unknown` → deny)。详见 [`SecretAliasMap`]。
+    secret_aliases: SecretAliasMap,
     /// ISS-016:本进程生命周期内 upstream response 扫到 secret leak 的累计次数。
     /// 未来 feedback loop(lease 收敛)的最小可观察性前置 —— 当前版本只产生审计事件
     /// + 本计数器;真正"命中 N 次自动 revoke lease"延至 Hub 集成 SecretBroker 后实装。
@@ -198,6 +373,9 @@ impl Hub {
         firewall: Arc<Firewall>,
         oracle: Arc<dyn DescriptorOracle>,
         config: HubConfig,
+        // 可逆脱敏 Slice 2:server-scoped `secret://<alias>` 真值映射。无 secrets 配置时
+        // 传 `SecretAliasMap::default()`(空 = fail-closed,任何引用都 deny)。
+        secret_aliases: SecretAliasMap,
     ) -> Self {
         Self {
             ledger,
@@ -208,6 +386,7 @@ impl Hub {
             attach_lock: Mutex::new(()),
             config,
             session_id: Mutex::new(None),
+            secret_aliases,
             leak_detected_count: AtomicU64::new(0),
         }
     }
@@ -734,6 +913,51 @@ impl Hub {
             }
         }
 
+        // 可逆脱敏 Slice 2:校验 args 里所有 `secret://<alias>` 引用**可解析**(未声明 / 跨
+        // server 越权 / 落 object key 位 → fail-closed deny + 真 `DecisionRecord`)。**只校验、
+        // 不暴露明文** —— `expose()` 替换延到 `invoke_upstream`(Allow 之后,设计 D4),故此处
+        // 拒绝看起来不像"已 allow 又在执行里 deny"。Clean 路径(无 `secret://` 引用)零开销快返。
+        // 放在 scope 快路径**之前**:scope-allow / firewall-allow / approval 三条下游路径都先经此门。
+        if let Err(alias_err) =
+            validate_alias_refs(&invocation.args, &route.server_id, &self.secret_aliases)
+        {
+            let dec = DecisionRecord {
+                decision_id: Uuid::new_v4().to_string(),
+                invocation_id: invocation_id.clone(),
+                decision: DecisionKind::Deny,
+                risk_score: 100,
+                reasons: vec![alias_err.reason()],
+                policy_ids: vec!["hub-secret-alias-gate".into()],
+                created_at: 0,
+            };
+            let _ = self
+                .ledger
+                .record_decision(&session_id, &dec, &EffectVector::default());
+
+            // 审计 `secret.alias_unresolved`。payload 只带 alias 名(非密钥)+ 关联 id;
+            // 解析失败本就无值可暴露,再过一道 redact() 兜底。
+            let event_payload = json!({
+                "reason": alias_err.reason(),
+                "decision_id": dec.decision_id,
+                "invocation_id": invocation_id,
+                "server_id": route.server_id,
+                "tool_name": route.upstream_tool_name,
+            });
+            let (redacted_payload, redacted_summary) = vigil_redaction::redact(&event_payload);
+            let _ = self.ledger.append_event(
+                &session_id,
+                EVENT_SECRET_ALIAS_UNRESOLVED,
+                &redacted_payload,
+                Some(&redacted_summary),
+            );
+
+            return Ok(Some(req.error(
+                JsonRpcError::VIGIL_DENIED,
+                "unresolvable secret:// alias in tool arguments",
+                Some(json!({ "decision_id": dec.decision_id, "reason": alias_err.reason() })),
+            )));
+        }
+
         // (F1) 查 ThisSession scope 缓存
         let args_hash = jcs_sha256(&args)?;
         if let Some(res) = self.ledger.find_session_scope_allow(
@@ -905,6 +1129,24 @@ impl Hub {
             )));
         };
 
+        // 可逆脱敏 Slice 2:detokenize seam —— 把 args 里每个 `secret://<alias>` 子串替换成真值
+        // `expose()`,紧邻上游调用(明文窗口最小;与改前透传字面占位符同一信任位置,但现在
+        // 是**真值**)。alias 合法性已在**决策前门**(`validate_alias_refs`)校验过,此处任何解析
+        // 失败(理论=TOCTOU/逻辑 bug;alias map 构造后不可变,无 setter)仍 **fail-closed** —— 绝不
+        // 透传字面 `secret://...` 或裸值给上游。**放在 span 创建之前**:失败时不留半截"已 decided
+        // 未 executed"的 span。
+        let detok_args =
+            match detokenize_alias_refs(&invocation.args, &route.server_id, &self.secret_aliases) {
+                Ok(a) => a,
+                Err(alias_err) => {
+                    return Ok(Some(req.error(
+                        JsonRpcError::VIGIL_DENIED,
+                        "secret:// alias resolution failed at tool boundary",
+                        Some(json!({ "reason": alias_err.reason() })),
+                    )));
+                }
+            };
+
         // ToolCallSpan 三段式(opened → decided → executed/execute_failed)
         let span = self
             .ledger
@@ -913,7 +1155,7 @@ impl Hub {
 
         let up_args = json!({
             "name": route.upstream_tool_name,
-            "arguments": invocation.args,
+            "arguments": detok_args,
         });
         let upstream_result = up.call(
             "tools/call",
@@ -923,9 +1165,11 @@ impl Hub {
 
         match upstream_result {
             Ok(result) => {
-                // ISS-016:post-exec leak scan —— 扫 upstream response 是否回吐 secret。
-                // **out-of-band** 设计:命中时**不改** result(保持 MCP 协议透明),仅写审
-                // 计事件 + 累加 `leak_detected_count`。真租约收敛延至 SecretBroker 集成。
+                // ISS-016 → 可逆脱敏 Slice 1:post-exec leak scan —— 扫 upstream response 是否回吐 secret。
+                // 默认 **out-of-band**(命中只审计 + 累加 `leak_detected_count`,保持 MCP 协议透明);
+                // `redact_tool_results` 开启时升级为 **in-band**:命中硬指纹即对 result 做 `redact` 后
+                // 再返回 agent/LLM,堵住工具输出把 secret 回吐给远端 LLM(round-trip 的"结果再脱敏"半边)。
+                let mut result = result;
                 if let Ok(result_text) = serde_jcs::to_string(&result) {
                     if let Some(rule) = vigil_redaction::detect_hard_secret(&result_text) {
                         self.leak_detected_count.fetch_add(1, Ordering::Relaxed);
@@ -935,6 +1179,7 @@ impl Hub {
                             "server_id": invocation.server_id,
                             "tool_name": invocation.tool_name,
                             "decision_id": decision.decision_id,
+                            "redacted": self.config.redact_tool_results,
                         });
                         let (redacted_payload, redacted_summary) =
                             vigil_redaction::redact(&event_payload);
@@ -944,6 +1189,17 @@ impl Hub {
                             &redacted_payload,
                             Some(&redacted_summary),
                         );
+                        if self.config.redact_tool_results {
+                            // in-band:命中后彻底脱敏整个 result 再返回。
+                            // ⚠️ `redact(&Value)` 只脱敏 object **值**、保留 **键** —— 若 secret 落在
+                            // key 位(如 `{"ghp_xxx": ...}`)会漏(Codex review NEEDS-FIX)。故对序列化串
+                            // (键+值全覆盖)做 `scrub_text` 后重解析;重解析失败则 **fail-closed** 整体
+                            // 占位,绝不把原文透传给 agent。`result_text` 即上面算出的序列化原文。
+                            let scrubbed = vigil_redaction::scrub_text(&result_text);
+                            result = serde_json::from_str(&scrubbed).unwrap_or_else(|_| {
+                                json!({ "vigil_redacted": "[REDACTED tool result contained secrets]" })
+                            });
+                        }
                     }
                 }
 
@@ -1133,6 +1389,146 @@ fn is_alias_body_char(b: u8) -> bool {
     matches!(b,
         b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'_' | b'.' | b'-'
     )
+}
+
+/// [`scan_alias_tokens`] 切出的片段。
+enum AliasPiece<'a> {
+    /// 非 token 文本段(原样保留)。
+    Literal(&'a str),
+    /// `secret://` 后的 alias 名 body(可空;空名解析必为 `Unknown` → fail-closed)。
+    Token(&'a str),
+}
+
+/// 可逆脱敏 Slice 2:`secret://<alias>` token 的字符串切片原语 —— **单一真源**文法(与
+/// [`strip_aliases`] 同构:`secret://` 前缀 + [`is_alias_body_char`] body)。从左到右把 `s` 切成
+/// 交替的 `Literal`(非 token 文本)与 `Token`(alias 名 = body,可空)片段,逐片调 `emit`;
+/// `emit` 返 `Err` 即短路。
+///
+/// `validate_alias_refs` 与 `detokenize_alias_refs` **共用**此扫描(用户全局规范:≥2 处复用才抽,
+/// 正好 2 处),杜绝两处各写一遍 token 文法导致漂移。`Token` 为**完整贪婪 body**,故
+/// `secret://k2` 解析为 alias `k2`(不会与 `secret://k` 混淆 —— 杜绝 naive substring 的最长前缀坑)。
+fn scan_alias_tokens(
+    s: &str,
+    mut emit: impl FnMut(AliasPiece<'_>) -> Result<(), AliasResolveError>,
+) -> Result<(), AliasResolveError> {
+    const ALIAS_PREFIX: &str = "secret://";
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut lit_start = 0; // 当前 Literal 段起点(批量 flush,避免逐字符 emit)
+    while i < bytes.len() {
+        if i + ALIAS_PREFIX.len() <= bytes.len()
+            && &bytes[i..i + ALIAS_PREFIX.len()] == ALIAS_PREFIX.as_bytes()
+        {
+            // 命中 token 起点:先 flush 之前积累的 Literal 段
+            if lit_start < i {
+                emit(AliasPiece::Literal(&s[lit_start..i]))?;
+            }
+            // body = 连续白名单字符(贪婪到首个非白名单字符)
+            let mut j = i + ALIAS_PREFIX.len();
+            while j < bytes.len() && is_alias_body_char(bytes[j]) {
+                j += 1;
+            }
+            emit(AliasPiece::Token(&s[i + ALIAS_PREFIX.len()..j]))?;
+            i = j;
+            lit_start = j;
+        } else {
+            // 非 token 起点:推进到下个 UTF-8 字符边界(Literal 段稍后整体 flush)
+            i += 1;
+            while i < bytes.len() && (bytes[i] & 0b1100_0000) == 0b1000_0000 {
+                i += 1;
+            }
+        }
+    }
+    if lit_start < bytes.len() {
+        emit(AliasPiece::Literal(&s[lit_start..]))?;
+    }
+    Ok(())
+}
+
+/// 可逆脱敏 Slice 2:递归**校验** `args` 里所有 `secret://<alias>` 引用可在 `server_id` 解析。
+///
+/// **只校验、不暴露明文**(决策前门用):string value 里每个 alias token 调 `resolve` 但丢弃
+/// `&SecretValue`(未 `expose()`);object **key** 含 `secret://` → `KeyPosition`(Slice 2 不支持
+/// 改写 key)。任一失败短路返首个错;caller fail-closed deny。无 `secret://` 引用 → `Ok(())`。
+fn validate_alias_refs(
+    args: &Value,
+    server_id: &str,
+    aliases: &SecretAliasMap,
+) -> Result<(), AliasResolveError> {
+    match args {
+        Value::String(s) => scan_alias_tokens(s, |piece| {
+            if let AliasPiece::Token(alias) = piece {
+                aliases.resolve(alias, server_id)?; // 校验,丢弃 &SecretValue(无明文暴露)
+            }
+            Ok(())
+        }),
+        Value::Array(arr) => {
+            for item in arr {
+                validate_alias_refs(item, server_id, aliases)?;
+            }
+            Ok(())
+        }
+        Value::Object(obj) => {
+            for (k, val) in obj {
+                if k.contains("secret://") {
+                    return Err(AliasResolveError::KeyPosition);
+                }
+                validate_alias_refs(val, server_id, aliases)?;
+            }
+            Ok(())
+        }
+        // 数字/布尔/null:不承载 alias
+        _ => Ok(()),
+    }
+}
+
+/// 可逆脱敏 Slice 2:递归 **detokenize** —— 把 `args` 里每个 `secret://<alias>` 子串替换成真值
+/// `expose()`,产出新 `Value`。
+///
+/// 只在 `invoke_upstream`(Allow 决策**之后**)调用,且校验已在决策前门通过 —— 此处任何解析失败
+/// 仍 **fail-closed**(返 `Err`,caller 不转发)。object **key** 含 `secret://` → `KeyPosition`
+/// (防御性;前门已拦)。**不改写 key**,只替换 string value 内的 token。这是全流程**唯一**调
+/// `expose()` 的点(紧邻上游调用,明文窗口最小)。
+fn detokenize_alias_refs(
+    args: &Value,
+    server_id: &str,
+    aliases: &SecretAliasMap,
+) -> Result<Value, AliasResolveError> {
+    match args {
+        Value::String(s) => {
+            let mut out = String::with_capacity(s.len());
+            scan_alias_tokens(s, |piece| {
+                match piece {
+                    AliasPiece::Literal(text) => out.push_str(text),
+                    // 唯一 expose 点
+                    AliasPiece::Token(alias) => {
+                        out.push_str(aliases.resolve(alias, server_id)?.expose());
+                    }
+                }
+                Ok(())
+            })?;
+            Ok(Value::String(out))
+        }
+        Value::Array(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(detokenize_alias_refs(item, server_id, aliases)?);
+            }
+            Ok(Value::Array(out))
+        }
+        Value::Object(obj) => {
+            let mut out = serde_json::Map::with_capacity(obj.len());
+            for (k, val) in obj {
+                if k.contains("secret://") {
+                    return Err(AliasResolveError::KeyPosition);
+                }
+                out.insert(k.clone(), detokenize_alias_refs(val, server_id, aliases)?);
+            }
+            Ok(Value::Object(out))
+        }
+        // 数字/布尔/null:原样克隆
+        other => Ok(other.clone()),
+    }
 }
 
 /// 计算 stdio server argv 的规范化 hash(JCS 后 SHA-256 hex-lower)。

@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use vigil_hub_cli::inspect::{self, InspectArgs};
+use vigil_hub_cli::demo::{self, DemoArgs};
 use vigil_hub_cli::serve::{self, ServeArgs};
 use vigil_hub_cli::{add_remote, AddRemoteArgs};
 
@@ -31,9 +31,18 @@ enum Command {
     /// {"vigil": {"command": "vigil-hub", "args": ["serve", "--stdio", "--ledger", "C:\\Vigil\\ledger.sqlite"]}}
     /// ```
     Serve(CliServeArgs),
-    /// 命令行查询本地审计账本(activity / search / approvals / session / servers /
-    /// sandbox / verify-chain);stdout 为单行 JSON,便于 `| jq` 与脚本化。
-    Inspect(InspectArgs),
+    /// 零设置首次体验:一条命令看完 default-deny 防护 + 可逆脱敏往返 + 防篡改审计。
+    ///
+    /// 走 Vigil 真实运行时代码(firewall / 脱敏 / 审计),只模拟外部 model/tool;不联系任何 LLM,
+    /// 不需账号/key/网络。`--tamper` 额外演示篡改账本被检测(可证伪)。
+    Demo(CliDemoArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct CliDemoArgs {
+    /// 额外演示可证伪:篡改一条账本行后真 verify_chain 检测到篡改(失败)。
+    #[arg(long)]
+    tamper: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -76,8 +85,7 @@ struct CliServeArgs {
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// Upstream MCP server 配置 JSON。schema:`{"upstreams":[{"name":..., "argv":[...]}]}`。
-    /// 每个 upstream 经 register_server + approve_server(Limited) + gate-before-spawn
-    /// (argv + resolved-program drift)后 attach,工具命名空间化聚合进 tools/list。
+    /// Stage 1 仅校验 JSON 格式,实际 attach 留 Stage 2 完成 register_server + approve_server。
     #[arg(long = "upstream-config")]
     upstream_config: Option<PathBuf>,
     /// 开发模式:tools/list 首次见到的 descriptor 自动批准(生产务必保持 false)。
@@ -94,6 +102,10 @@ struct CliServeArgs {
     /// flag off → 走 v0.4 默认 NoopEngine(向后兼容)。
     #[arg(long = "enable-privacy-filter")]
     enable_privacy_filter: bool,
+    /// 可逆脱敏 Slice 1:上游工具响应命中硬指纹 secret 时,in-band 脱敏 result 后再返回
+    /// agent/LLM(默认 off = 既有 out-of-band 仅审计)。堵住工具输出把 secret 回吐给远端 LLM。
+    #[arg(long = "redact-tool-results")]
+    redact_tool_results: bool,
 }
 
 impl From<CliServeArgs> for ServeArgs {
@@ -104,6 +116,7 @@ impl From<CliServeArgs> for ServeArgs {
             auto_approve_first_seen: c.auto_approve_first_seen,
             dev_permissive_firewall: c.dev_permissive_firewall,
             enable_privacy_filter: c.enable_privacy_filter,
+            redact_tool_results: c.redact_tool_results,
         }
     }
 }
@@ -153,7 +166,17 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        // inspect 自行处理 ExitCode(0=ok / 1=dispatch err / 2=参数或 ledger 错误)
-        Some(Command::Inspect(args)) => inspect::run(args),
+        Some(Command::Demo(args)) => {
+            let demo_args = DemoArgs {
+                tamper: args.tamper,
+            };
+            match demo::run(&demo_args) {
+                Ok(()) => std::process::ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("vigil-hub demo failed: {e}");
+                    std::process::ExitCode::FAILURE
+                }
+            }
+        }
     }
 }

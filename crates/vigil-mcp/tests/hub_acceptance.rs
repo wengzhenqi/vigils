@@ -60,6 +60,7 @@ fn setup_hub() -> (Arc<Ledger>, Arc<Hub>) {
             upstream_call_timeout: Duration::from_millis(500),
             ..Default::default()
         },
+        vigil_mcp::SecretAliasMap::default(),
     ));
     (l, hub)
 }

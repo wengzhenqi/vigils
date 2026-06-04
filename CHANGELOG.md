@@ -8,6 +8,31 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.10] — 2026-06-05
+
+A zero-setup `vigil-hub demo` first-run experience, plus reversible secret redaction at the
+tool boundary. Existing installs auto-update.
+
+### Added
+
+- **`vigil-hub demo` — see the value in 60 seconds, zero setup.** One command runs a planted
+  scenario through Vigils' real runtime code (firewall · reversible redaction · tamper-evident
+  audit), contacting no LLM and needing no account/key/network: an agent's raw secret is denied,
+  a `secret://alias` placeholder round-trips so the remote model only ever sees the placeholder
+  while the local tool receives the real value, a leaked tool result is re-redacted, and the audit
+  ledger is shown to hold no plaintext. `--tamper` alters a ledger row and the real verify-chain
+  detects it — falsifiable tamper-evidence you run yourself.
+- **Reversible redaction — `secret://alias` detokenization at the tool boundary.** Declare secret
+  aliases (`env:`/`keyring:`, server-scoped) in your upstreams config; the agent passes
+  `secret://<alias>` (the remote model never sees the real value), and Vigils substitutes the real
+  value only at the local tool-execution boundary. Unknown / cross-server / raw-secret-in-alias
+  references fail closed (deny). Tool results that leak a secret are re-redacted before returning
+  to the model (opt-in `--redact-tool-results`). Untrusted alias text is never echoed into errors.
+
+### Changed
+
+- README now leads with a **"See it in 60 seconds"** section.
+
 ## [v0.1.9] — 2026-06-04
 
 Chrome extension gains a manual-input redaction guard, plus release-download improvements.

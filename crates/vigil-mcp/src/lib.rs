@@ -19,8 +19,8 @@ pub mod upstream;
 
 pub use descriptor::{descriptor_hash, DESCRIPTOR_DOMAIN_TAG};
 pub use hub::{
-    compute_argv_hash, Hub, HubConfig, HubError, EVENT_RAW_SECRET_ATTEMPT_DETECTED,
-    EVENT_SECRET_LEAK_DETECTED,
+    compute_argv_hash, Hub, HubConfig, HubError, SecretAliasMap, EVENT_RAW_SECRET_ATTEMPT_DETECTED,
+    EVENT_SECRET_ALIAS_UNRESOLVED, EVENT_SECRET_LEAK_DETECTED,
 };
 pub use namespace::{NamespaceError, ToolRoute, ToolRouter};
 pub use oracle::RegistryDescriptorOracle;

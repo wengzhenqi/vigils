@@ -229,4 +229,77 @@ mod mcp_upstream_env_tests {
             "批准的 user_env 应覆盖白名单继承的 PATH(注入顺序 user_env 最后,优先级最高)"
         );
     }
+
+    /// 可逆脱敏 Slice 2 强制守门(Codex design review mandatory change)— **结构层**。
+    ///
+    /// MCP upstream env 白名单**绝不**含任何密钥类键。`env:` 声明的 secret(如 `GITHUB_TOKEN`)
+    /// 经 `secret://<alias>` 解析只在 detokenize seam 注入到 tool **args**,**绝不**作为 env 继承给
+    /// upstream 子进程 —— 否则 upstream 不靠 alias 即可拿 raw token,可逆脱敏 feature 失效。本测试
+    /// 钉死不变量:未来给白名单加 `*_TOKEN/*_SECRET/*_KEY` 类键会立刻 break(防静默回归)。
+    #[test]
+    fn upstream_env_allowlist_contains_no_secret_keys() {
+        use super::MCP_UPSTREAM_ENV_ALLOWLIST;
+        // 密钥类子串标记(大小写不敏感);命中即视为危险键
+        const SECRET_MARKERS: &[&str] = &[
+            "TOKEN",
+            "SECRET",
+            "PASSWORD",
+            "PASSWD",
+            "CREDENTIAL",
+            "PRIVATE",
+            "APIKEY",
+            "API_KEY",
+            "ACCESS_KEY",
+        ];
+        for key in MCP_UPSTREAM_ENV_ALLOWLIST {
+            let upper = key.to_ascii_uppercase();
+            for marker in SECRET_MARKERS {
+                assert!(
+                    !upper.contains(marker),
+                    "MCP upstream env 白名单含疑似密钥键 `{key}`(命中 `{marker}`)—— \
+                     env: secret 绝不可作为 env 继承给 upstream,只能经 alias detokenize 进 args"
+                );
+            }
+        }
+        // 特定高危名单(即便不含上面子串也必须排除)
+        for danger in [
+            "AWS_SECRET_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "NPM_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+        ] {
+            assert!(
+                !MCP_UPSTREAM_ENV_ALLOWLIST.contains(&danger),
+                "白名单不得含高危密钥键 `{danger}`"
+            );
+        }
+    }
+
+    /// 可逆脱敏 Slice 2 强制守门 — **行为层**。
+    ///
+    /// 进程环境里存在 `GITHUB_TOKEN`(模拟父进程持有的 secret)时,`apply_mcp_upstream_env_policy`
+    /// 后它**绝不**出现在 upstream 的 env override 里 —— `env_clear` + 仅注入白名单(不含
+    /// GITHUB_TOKEN)。配合上面的结构测试:结构层防"被加进白名单",行为层证"真在父环境里也不泄漏"。
+    /// (edition 2021,`set_var` 安全;保存并恢复原值避免污染并行/后续测试。)
+    #[test]
+    fn secret_env_var_not_inherited_by_upstream() {
+        let saved = std::env::var("GITHUB_TOKEN").ok();
+        std::env::set_var("GITHUB_TOKEN", "ghp_PARENT_PROCESS_SECRET_must_not_leak");
+
+        let mut cmd = std::process::Command::new("dummy-not-spawned");
+        apply_mcp_upstream_env_policy(&mut cmd, Vec::<(String, String)>::new());
+        let envs = collected_envs(&cmd);
+
+        assert!(
+            !envs.contains_key("GITHUB_TOKEN"),
+            "父进程的 GITHUB_TOKEN 绝不能继承给 upstream(deny-by-default 白名单不含它)"
+        );
+
+        // 恢复原值
+        match saved {
+            Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+            None => std::env::remove_var("GITHUB_TOKEN"),
+        }
+    }
 }

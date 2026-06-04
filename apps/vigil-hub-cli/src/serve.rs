@@ -30,6 +30,7 @@
 
 #![allow(clippy::uninlined_format_args)]
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,8 +42,10 @@ use thiserror::Error;
 use vigil_audit::Ledger;
 use vigil_firewall::scorer::{DescriptorOracle, DescriptorStatus, StaticDescriptorOracle};
 use vigil_firewall::{Firewall, FirewallConfig};
+// 可逆脱敏 Slice 2:从 `upstreams.json` 的 `secrets` map 读 env:/keyring: 源装 SecretAliasMap。
+use vigil_lease::{KeyringSecretStore, SecretStore, SecretValue};
 use vigil_mcp::protocol::{read_message, write_message, ProtocolError};
-use vigil_mcp::{compute_argv_hash, Hub, HubConfig, HubError, JsonRpcRequest};
+use vigil_mcp::{compute_argv_hash, Hub, HubConfig, HubError, JsonRpcRequest, SecretAliasMap};
 use vigil_policy::{defaults::default_ruleset, PolicyAction, PolicyEngine, PolicyRule};
 use vigil_types::{ServerProfile, TransportKind, TrustLevel};
 
@@ -81,6 +84,10 @@ pub struct ServeArgs {
     /// 运行期前置:`VIGIL_PRIVACY_FILTER_MODEL_DIR` 指向含 tokenizer.json /
     /// config.json / model_q4f16.onnx 三件套的目录。
     pub enable_privacy_filter: bool,
+
+    /// 可逆脱敏 Slice 1:上游工具响应命中硬指纹 secret 时,**in-band** 脱敏 result 后再返回
+    /// agent/LLM(默认 off = 既有 out-of-band 仅审计行为)。见 HubConfig::redact_tool_results。
+    pub redact_tool_results: bool,
 }
 
 /// JSON 配置 schema(`--upstream-config` 指向的文件)。
@@ -99,6 +106,25 @@ pub struct UpstreamsConfig {
     /// Upstream 列表。Stage 1 仅 stdio transport(argv 启动)。
     #[serde(default)]
     pub upstreams: Vec<UpstreamEntry>,
+    /// 可逆脱敏 Slice 2:`secret://<alias>` → 真值声明(alias 名 → [`SecretDecl`])。
+    ///
+    /// agent 在 tool args 里写 `secret://<alias>` 占位,远端 LLM 只见占位符;Vigil 在工具边界
+    /// 把它替换成真值(`env:`/`keyring:` 源读取)。**绝不**接受 `literal:`(明文落配置是反模式)。
+    /// 每个 alias 必须限定 `server`(D1:最小注入面)。无 `secrets` 段 = 空 map = 任何
+    /// `secret://x` 引用都 fail-closed deny。
+    #[serde(default)]
+    pub secrets: HashMap<String, SecretDecl>,
+}
+
+/// 单条 `secret://<alias>` 声明(可逆脱敏 Slice 2)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct SecretDecl {
+    /// 真值来源:`env:<VAR>`(启动期从进程环境读)或 `keyring:<service>/<account>`(OS keychain)。
+    /// **拒** `literal:<...>`(secrets-in-config 反模式;dev 用 `env:`)与任何未知 scheme。
+    pub source: String,
+    /// 限定的上游 server_id —— 该 alias **只**能被解析给这个 server 的 tool call(跨 server
+    /// 解析 deny,H5 oracle 防御)。Slice 2 **必填**(设计 D1);留空视为非法声明。
+    pub server: String,
 }
 
 /// 单条 upstream 定义(Stage 1 仅 stdio)。
@@ -137,6 +163,18 @@ pub enum ServeError {
         name: String,
         /// 具体原因
         reason: &'static str,
+    },
+
+    /// 可逆脱敏 Slice 2:`secrets` map 里某条 `secret://<alias>` 声明非法
+    /// (未知 source scheme / 拒 literal: / 缺 server scope / env var 未设 / keyring 读失败)。
+    /// fail-closed 启动失败 —— 绝不带半截 alias map 起 serve(否则用户以为某 alias 可用实际不可)。
+    /// **注意**:`reason` 只描述**结构性**问题,绝不含任何真值。
+    #[error("secret alias `{alias}` declaration invalid: {reason}")]
+    InvalidSecretDecl {
+        /// alias 名(非密钥)
+        alias: String,
+        /// 结构性原因(不含真值)
+        reason: String,
     },
 
     /// ISS-008 Phase 2:运行期 `--enable-privacy-filter` 请求 T0 Privacy Filter,
@@ -260,24 +298,119 @@ pub fn build_hub(args: &ServeArgs) -> Result<(Arc<Hub>, Arc<Ledger>), ServeError
     //    与 timing 已**完全解耦**。生产仍保持 false。
     let hub_cfg = HubConfig {
         auto_approve_first_seen_tools: args.auto_approve_first_seen,
+        redact_tool_results: args.redact_tool_results,
         ..Default::default()
     };
-    let hub = Arc::new(Hub::new(ledger.clone(), firewall, oracle, hub_cfg));
+
+    // 4'. 可逆脱敏 Slice 2:**先**读 upstreams config(若有),让 `secrets` map 在 Hub::new 前
+    //     就绪 —— alias 真值映射是 Hub 的构造参数(运行时 only,绝不入账本)。config 只读一次,
+    //     既供 secrets 装配也供下面的 upstream attach(避免读两遍 / drift)。
+    let upstreams_cfg = match args.upstreams_config.as_deref() {
+        Some(cfg_path) => {
+            let raw = std::fs::read_to_string(cfg_path)?;
+            Some(serde_json::from_str::<UpstreamsConfig>(&raw)?)
+        }
+        None => None,
+    };
+    let secret_aliases = match &upstreams_cfg {
+        Some(cfg) => build_secret_alias_map(&cfg.secrets)?,
+        None => SecretAliasMap::default(),
+    };
+
+    let hub = Arc::new(Hub::new(
+        ledger.clone(),
+        firewall,
+        oracle,
+        hub_cfg,
+        secret_aliases,
+    ));
     // set_session_id_for_test 是 lib API 的命名纪律瑕疵(见 feedback);serve 是
     // 生产入口,但 Hub 目前对外只暴露这一个 session 注入方法。v0.3 Stage 2 再
     // 把它改名为 `set_session_id`(同时 `_for_test` 作为 guard 仅 cfg(test) 暴露)。
     hub.set_session_id_for_test(session_id)?;
 
     // 5. Upstream attach(Stage 2):对 config 的每个 entry 跑完整 onboarding
-    if let Some(cfg_path) = args.upstreams_config.as_deref() {
-        let raw = std::fs::read_to_string(cfg_path)?;
-        let cfg: UpstreamsConfig = serde_json::from_str(&raw)?;
+    if let Some(cfg) = &upstreams_cfg {
         for entry in &cfg.upstreams {
             attach_stdio_upstream(&ledger, &hub, entry)?;
         }
     }
 
     Ok((hub, ledger))
+}
+
+/// 可逆脱敏 Slice 2:从 `secrets` 声明 map 装配 [`SecretAliasMap`](启动期读 env/keyring 真值)。
+///
+/// fail-closed:任一声明非法(缺 server / 未知 scheme / 拒 literal: / env 未设 / keyring 读失败)
+/// 即返 [`ServeError::InvalidSecretDecl`],**绝不**带半截 map 起 serve。`reason` 只描述结构性
+/// 问题,不含真值。
+fn build_secret_alias_map(
+    secrets: &HashMap<String, SecretDecl>,
+) -> Result<SecretAliasMap, ServeError> {
+    let mut map = SecretAliasMap::default();
+    for (alias, decl) in secrets {
+        // D1:每个 alias 必须限定 server(最小注入面);空 server 视为非法声明。
+        if decl.server.trim().is_empty() {
+            return Err(ServeError::InvalidSecretDecl {
+                alias: alias.clone(),
+                reason: "missing required `server` scope (Slice 2 requires every alias to name a server)"
+                    .to_string(),
+            });
+        }
+        let value = resolve_secret_source(alias, &decl.source)?;
+        map.insert(alias.clone(), value, decl.server.clone());
+    }
+    Ok(map)
+}
+
+/// 解析单条 secret `source` → 真值(可逆脱敏 Slice 2)。
+///
+/// 支持 `env:<VAR>` 与 `keyring:<service>/<account>`;**拒** `literal:`(secrets-in-config 反模式)
+/// 与任何未知 scheme。错误 `reason` 绝不含真值。
+fn resolve_secret_source(alias: &str, source: &str) -> Result<SecretValue, ServeError> {
+    let bad = |reason: String| ServeError::InvalidSecretDecl {
+        alias: alias.to_string(),
+        reason,
+    };
+    if let Some(var) = source.strip_prefix("env:") {
+        if var.is_empty() {
+            return Err(bad("empty env var name (expected `env:<VAR>`)".to_string()));
+        }
+        // 启动期从进程环境读;未设 → fail-closed(不静默置空值)。
+        // Code R2 Medium 修复:**不**回显 var 名 —— 误配 `source:"env:<secret>"` 时 var 名可能
+        // 本身是误填的 secret。alias 名(operator 配置 key,由 `bad()` 带上)+ operator 自己的
+        // 配置已足够定位是哪条 env 源,无需在错误里回显 var 名。
+        let v = std::env::var(var).map_err(|_| {
+            bad("environment variable referenced by `env:` source is not set".to_string())
+        })?;
+        Ok(SecretValue::new(v))
+    } else if let Some(rest) = source.strip_prefix("keyring:") {
+        // 形如 `service/account`;account 部分可含 `/`(取首个 `/` 切分 service)。
+        let (service, account) = rest.split_once('/').ok_or_else(|| {
+            bad("keyring source must be `keyring:<service>/<account>`".to_string())
+        })?;
+        if service.is_empty() || account.is_empty() {
+            return Err(bad(
+                "keyring source must be `keyring:<service>/<account>` (non-empty)".to_string(),
+            ));
+        }
+        // KeyringSecretStore 错误已结构化(不含原文),映射为 reason(仍不含真值)。
+        KeyringSecretStore::new(service)
+            .get(account)
+            .map_err(|e| bad(format!("keyring read failed: {e}")))
+    } else if source.starts_with("literal:") {
+        Err(bad(
+            "`literal:` source is refused (secrets-in-config is an anti-pattern; use `env:` or `keyring:`)"
+                .to_string(),
+        ))
+    } else {
+        // Code R1 Medium 修复:**不**回显整个 `source` —— 无 scheme 的误配置(如直接写裸 secret)
+        // 会把明文带进启动错误。只描述期望格式;alias 名(operator 配置 key,非密钥)已由 `bad()` 带上。
+        Err(bad(
+            "unknown secret source scheme (expected `env:<VAR>` or `keyring:<service>/<account>`)"
+                .to_string(),
+        ))
+    }
 }
 
 /// 对单条 upstream entry:

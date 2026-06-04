@@ -112,6 +112,22 @@ The **Chrome extension** lives in `extensions/chrome-mv3/` — load it unpacked 
 
 ## Quick Start
 
+### See it in 60 seconds (zero setup)
+
+One command shows Vigils' core value — **default-deny protection + reversible secret redaction +
+tamper-evident audit** — running through the real runtime code, contacting no LLM, needing no account,
+key, or network:
+
+```bash
+vigil-hub demo            # default-deny → placeholder round-trip → real value only at the local tool → audit with no plaintext
+vigil-hub demo --tamper   # also: alter the audit ledger and watch verify-chain DETECT it (falsifiable)
+```
+
+> **The aha:** the agent did useful work with a real secret — while the model, logs, and audit never
+> received the real value. It's a planted scenario with a freshly-generated local fixture; the
+> firewall, redaction, and audit are Vigils' real code, only the model/tool provider is simulated.
+> Then protect your real agent with `vigil-hub serve --stdio`.
+
 ### As an MCP gateway (CLI)
 
 Put Vigils in front of your MCP servers so every tool call is firewalled, approved, and audited:

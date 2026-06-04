@@ -46,6 +46,7 @@ fn setup_hub() -> (Arc<Ledger>, Hub) {
             approval_wait: Duration::from_millis(50),
             ..Default::default()
         },
+        vigil_mcp::SecretAliasMap::default(),
     );
     (ledger, hub)
 }

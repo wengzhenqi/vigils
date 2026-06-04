@@ -1,5 +1,6 @@
 [package]
 name = "vigil-hub-cli"
+publish = false  # 非 SDK publish set(CLI app)— 不上 crates.io;cargo-deny path-dep wildcard 守门
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -32,11 +33,6 @@ vigil-http-transport = { path = "../../crates/vigil-http-transport" }
 vigil-firewall = { path = "../../crates/vigil-firewall" }
 vigil-policy = { path = "../../crates/vigil-policy" }
 vigil-types = { path = "../../crates/vigil-types" }
-# v0.1.2:`inspect` 子命令复用 desktop lib 的 Ledger dispatch/render(无 gui feature,
-# 仅 lib);承接原 `vigil-desktop` CLI bin 的"命令行查账本"能力。
-vigil-desktop = { path = "../desktop", default-features = false }
-vigil-ui-protocol = { path = "../../crates/vigil-ui-protocol" }
-vigil-runner = { path = "../../crates/vigil-runner", default-features = false }
 # ISS-008 Phase 2 T5:ServeError::PrivacyFilterInit 透传 EngineError;feature 注入走
 # vigil-firewall/ort,本依赖默认 0 features(--features ort 时由 vigil-firewall 透传打开)。
 vigil-redaction = { path = "../../crates/vigil-redaction" }
@@ -46,6 +42,14 @@ oauth2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# `vigil-hub demo` 零设置首次体验:驱动真 Hub 需 args 规范化哈希(scope 预批准走真 Allow 路径)+
+# 本地生成形似真实的 demo secret(getrandom)+ tamper 演示直接改账本一行(rusqlite,与 vigil-audit
+# 同 bundled SQLite)。均 workspace 依赖,已随 vigil-audit/vigil-lease 链入二进制。
+serde_jcs = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 # CLI 级集成测试用(β R1 MUST-FIX 4):InMemorySecretStore 注入 + mock AS
