@@ -28,8 +28,8 @@ proxies your real MCP tool servers ("upstreams"), gating every call.
                                         └────────────────────┘
 ```
 
-Each upstream's tools are namespaced (`fs/read_file`, `github/create_issue`) and aggregated into
-the `tools/list` your agent sees. When the agent calls one, Vigils evaluates it against the
+Each upstream's tools are namespaced with a `__` (double-underscore) separator — `<server>__<tool>`,
+e.g. `fs__read_file`, `github__create_issue` — and aggregated into the `tools/list` your agent sees. When the agent calls one, Vigils evaluates it against the
 firewall **before** forwarding, records a decision in the audit ledger, and either allows it,
 denies it, or queues it for your approval.
 
@@ -87,7 +87,7 @@ vigil-hub serve --stdio --ledger ./vigil.db --upstream-config ./upstreams.json
 
 For each entry Vigils registers the server, pins its launch command, and runs a
 **gate-before-spawn** check (argv + resolved-program drift) *before* starting the child process —
-then namespaces its tools (`fs/…`, `github/…`) into `tools/list`.
+then namespaces its tools (`fs__…`, `github__…`) into `tools/list`.
 
 > **HTTP / remote MCP servers** use OAuth onboarding instead:
 > `vigil-hub add-remote-mcp --url https://mcp.example.com/ --client-id <id> --scopes mcp:tools.read`

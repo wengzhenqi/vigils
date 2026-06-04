@@ -26,8 +26,8 @@ MCP 工具服务器（"upstream"），对每次调用进行管控。
                                         └────────────────────┘
 ```
 
-每个 upstream 的工具会被命名空间化（`fs/read_file`、`github/create_issue`），聚合进 agent 看到的
-`tools/list`。agent 调用某个工具时，Vigils 会在**转发之前**用防火墙评估它、在审计账本记一条决策，
+每个 upstream 的工具会用 `__`（双下划线）分隔符做命名空间化 —— `<server>__<tool>`，例如
+`fs__read_file`、`github__create_issue` —— 聚合进 agent 看到的 `tools/list`。agent 调用某个工具时，Vigils 会在**转发之前**用防火墙评估它、在审计账本记一条决策，
 然后放行、拒绝、或排进审批队列等你确认。
 
 ## 前置条件
@@ -83,7 +83,7 @@ vigil-hub serve --stdio --ledger ./vigil.db --upstream-config ./upstreams.json
 
 对每个条目，Vigils 会注册该 server、固定其启动命令，并在启动子进程**之前**做一次
 **gate-before-spawn** 校验（argv + resolved-program 双 drift），然后把它的工具命名空间化
-（`fs/…`、`github/…`）聚合进 `tools/list`。
+（`fs__…`、`github__…`）聚合进 `tools/list`。
 
 > **HTTP / 远程 MCP server** 改走 OAuth onboarding：
 > `vigil-hub add-remote-mcp --url https://mcp.example.com/ --client-id <id> --scopes mcp:tools.read`
