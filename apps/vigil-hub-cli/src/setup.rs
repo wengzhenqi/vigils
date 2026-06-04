@@ -199,6 +199,19 @@ fn resolve_ledger(
     Ok(base.join(VIGIL_SUBDIR).join(LEDGER_FILENAME))
 }
 
+/// 默认共享 ledger 路径(生产):`VIGIL_LEDGER_PATH` > `<data_local>/Vigil/ledger.sqlite3`;
+/// 无法解析 → `None`。供 `inspect` 等消费方默认打开**与 setup/hook 同一个**账本 —— 让用户
+/// `vigil-hub setup` 后直接 `vigil-hub inspect activity` 就能看到被拦的内容(闭合"看见保护"回路)。
+pub fn default_ledger_path() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var(LEDGER_ENV_VAR) {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            return Some(PathBuf::from(trimmed));
+        }
+    }
+    dirs::data_local_dir().map(|b| b.join(VIGIL_SUBDIR).join(LEDGER_FILENAME))
+}
+
 /// 按平台 shell 转义一段路径,使其在 Claude Code shell-执行 hook command 时被当作**单一字面参数**,
 /// 不发生 `$(...)`/反引号/`$VAR`/通配等展开。
 ///

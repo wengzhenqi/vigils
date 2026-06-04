@@ -8,6 +8,19 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.13] — 2026-06-05
+
+A small but completing patch: after `vigil-hub setup`, you can now *see* your protection working
+with zero extra configuration.
+
+### Changed
+
+- **`vigil-hub inspect` defaults to the shared audit ledger.** When you omit `--db-path`, `inspect`
+  now opens the **same** ledger that `vigil-hub setup` / the hook write to
+  (`VIGIL_LEDGER_PATH` → `<local-data>/Vigil/ledger.sqlite3`) instead of an empty in-memory database.
+  So right after `vigil-hub setup`, `vigil-hub inspect activity` shows what Vigil has actually
+  blocked — no flags needed. The setup output now points you to it.
+
 ## [v0.1.12] — 2026-06-05
 
 Turnkey protection: download the release, run one command, and your Claude Code tool calls are

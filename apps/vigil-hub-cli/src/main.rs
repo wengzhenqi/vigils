@@ -360,6 +360,7 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
         println!("  tamper-evident local audit ledger.");
         println!();
         println!("  Verify:  vigil-hub setup --status");
+        println!("  See it:  vigil-hub inspect activity     # what Vigil has blocked, anytime");
         println!("  Undo:    vigil-hub setup --uninstall");
         println!("  Restart Claude Code (or start a new session) for the hook to take effect.");
     } else {

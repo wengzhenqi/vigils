@@ -28,7 +28,8 @@ use vigil_ui_protocol::{
 /// `vigil-hub inspect` 子命令参数。`--db-path` / `--capability` 对内层子命令全局可见。
 #[derive(Debug, Args)]
 pub struct InspectArgs {
-    /// SQLite DB path(省略 = in-memory,仅本进程可见)
+    /// SQLite DB path(省略 = 默认共享账本 `VIGIL_LEDGER_PATH` / `<data 目录>/Vigil/ledger.sqlite3`,
+    /// 即 `vigil-hub setup`/`hook` 用的同一个 → 直接看到被拦内容;无默认路径才退回内存空账本)
     #[arg(long, global = true)]
     db_path: Option<String>,
 
@@ -358,10 +359,15 @@ fn build_command(cmd: InspectCmd) -> Result<UiCommand, String> {
 
 /// 执行 `vigil-hub inspect <cmd>`:打开 ledger → 构造 UiCommand → dispatch → 渲染 JSON。
 pub fn run(args: InspectArgs) -> ExitCode {
-    // 打开 Ledger(--db-path 或默认内存)
+    // 打开 Ledger:--db-path 优先;省略 → 默认**共享账本**(与 setup/hook 同一个,
+    // 让 `vigil-hub setup` 后直接 `vigil-hub inspect activity` 就能看到被拦内容);
+    // 连默认路径都无法解析(无 data 目录且未设 VIGIL_LEDGER_PATH)才退回内存空账本。
     let ledger = match &args.db_path {
         Some(p) => Ledger::open(p),
-        None => Ledger::open_in_memory(),
+        None => match crate::setup::default_ledger_path() {
+            Some(p) => Ledger::open(&p),
+            None => Ledger::open_in_memory(),
+        },
     };
     let ledger = match ledger {
         Ok(l) => l,

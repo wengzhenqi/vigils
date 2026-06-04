@@ -8,6 +8,17 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.13] — 2026-06-05
+
+一个小而收尾的补丁:`vigil-hub setup` 之后,你现在可以**零额外配置**直接看到保护在工作。
+
+### 变更
+
+- **`vigil-hub inspect` 默认指向共享审计账本。** 省略 `--db-path` 时,`inspect` 现在打开
+  **与** `vigil-hub setup` / hook 写入的**同一个**账本(`VIGIL_LEDGER_PATH` → `<本机数据目录>/Vigil/ledger.sqlite3`),
+  而非空的内存数据库。于是 `vigil-hub setup` 之后,`vigil-hub inspect activity` 直接显示 Vigil 实际拦了
+  什么——无需任何参数。setup 的输出现在也会提示你这条命令。
+
 ## [v0.1.12] — 2026-06-05
 
 一键保护:下载 release,跑一条命令,你的 Claude Code 工具调用就受保护。这是从 GitHub 下载到真实防护的最快路径。
