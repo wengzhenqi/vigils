@@ -8,6 +8,21 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.26] — 2026-06-07
+
+Linux CLI 现在能在近十年几乎任何 glibc Linux 上运行 —— 不再只限较新发行版。
+
+### 变更
+
+- **Linux CLI 二进制改为 glibc 2.17 地板(覆盖几乎所有发行版)。** 此前已发布的 Linux CLI 在
+  Ubuntu 22.04 构建、要求 `GLIBC_2.34`,因而在更老但常见的发行版上 `version 'GLIBC_2.xx' not found`
+  起不来 —— Ubuntu ≤20.04、Debian ≤11、RHEL/CentOS 7–8、Amazon Linux 2 全中招。现在发布流程改用
+  [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) 以 `x86_64-unknown-linux-gnu.2.17`
+  为目标构建 Linux CLI,把所需 glibc 符号下沉到 2.17(manylinux2014 同款地板,覆盖近十年几乎所有 glibc
+  Linux)。**功能完全不变** —— 二进制行为一致,只是链接到更老的 glibc 符号。发布管线还新增 `objdump`
+  守门:glibc 地板一旦回升超过 2.17 即构建失败。macOS 与 Windows 构建保持不变。(真实 CI 已验证:
+  `vigil-hub` 与 `vigil-native-host` 现在最高均为 `GLIBC_2.17`,低于原 `GLIBC_2.34`。)
+
 ## [v0.1.25] — 2026-06-07
 
 桌面应用现在以**保护成效概览**为首屏 —— 一眼看到 Vigil 为你拦下了什么,与 CLI 的

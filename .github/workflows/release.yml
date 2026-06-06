@@ -130,13 +130,19 @@ jobs:
 
       # D21 守门:zigbuild 若失灵(地板未下沉),objdump 断言 fail 整 leg,杜绝静默发回高 glibc 二进制。
       # sort -V 把 max 符号与 GLIBC_2.17 比较:并入后版本升序排,若 tail(最大)仍是 2.17 则 max≤2.17 通过。
+      # Codex D21 加固:objdump 缺失/读失败时绝不静默通过(否则守门形同虚设)——显式核 objdump 存在 +
+      # 二进制存在 + objdump 输出单独捕获(其失败经 set -e 终止,不被后续管道状态掩盖)。
       - name: Verify glibc floor <= 2.17 (any-distro reach guard)
         if: runner.os == 'Linux'
         run: |
-          set -e
+          set -euo pipefail
+          command -v objdump >/dev/null 2>&1 || { echo "::error::objdump not available — cannot verify glibc floor"; exit 1; }
           for bin in vigil-hub vigil-native-host; do
             path="${{ matrix.bindir }}/$bin"
-            max=$(objdump -T "$path" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V | tail -1)
+            [ -f "$path" ] || { echo "::error::binary not found: $path"; exit 1; }
+            dump=$(objdump -T "$path")
+            # grep 无匹配(纯静态二进制)合法 → ||true 容忍;gnu 动态链接二进制必含 GLIBC_ 符号。
+            max=$(printf '%s\n' "$dump" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V | tail -1 || true)
             echo "$bin max GLIBC symbol: ${max:-none}"
             if [ -n "$max" ] && [ "$(printf '%s\nGLIBC_2.17\n' "$max" | sort -V | tail -1)" != "GLIBC_2.17" ]; then
               echo "::error::glibc floor regression: $bin requires $max (> GLIBC_2.17)"

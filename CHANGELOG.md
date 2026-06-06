@@ -8,6 +8,24 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.26] — 2026-06-07
+
+The Linux CLI now runs on virtually any glibc Linux from the last decade — not just recent releases.
+
+### Changed
+
+- **Linux CLI binaries now target a glibc 2.17 floor (any-distro reach).** Until now the published
+  Linux CLI was built on Ubuntu 22.04 and required `GLIBC_2.34`, so it failed to start with
+  `version 'GLIBC_2.xx' not found` on older-but-common distros — Ubuntu ≤20.04, Debian ≤11,
+  RHEL/CentOS 7–8, Amazon Linux 2. The release now builds the Linux CLI with
+  [`cargo-zigbuild`](https://github.com/rust-cross/cargo-zigbuild) targeting
+  `x86_64-unknown-linux-gnu.2.17`, lowering the required glibc symbols to 2.17 (the manylinux2014
+  floor, covering essentially every glibc Linux from the last decade). **No behavior change** — the
+  binary is functionally identical; it just links against older glibc symbols. The release pipeline
+  also gained an `objdump` guard that fails the build if the glibc floor ever regresses above 2.17.
+  macOS and Windows builds are unchanged. (Verified in real CI: both `vigil-hub` and
+  `vigil-native-host` now top out at `GLIBC_2.17`, down from `GLIBC_2.34`.)
+
 ## [v0.1.25] — 2026-06-07
 
 The desktop app now opens on a **Protection Overview** — see what Vigil has caught for you at a
