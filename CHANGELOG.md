@@ -8,6 +8,21 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.21] — 2026-06-06
+
+Fixes the Linux CLI so it actually runs on Ubuntu 22.04 LTS, Debian 12, and most current
+distributions — the previous Linux build silently required a glibc version newer than they ship.
+
+### Fixed
+
+- **Linux CLI now runs on glibc 2.35+ (Ubuntu 22.04 LTS, Debian 12, …).** The `vigils-cli-linux-x64`
+  binary was built on the latest CI runner (Ubuntu 24.04), so it required `GLIBC_2.39` and failed at
+  startup on anything older with `version 'GLIBC_2.39' not found` — including Ubuntu 22.04 LTS, the
+  single most common Linux for developers. The Linux CLI is now built on Ubuntu 22.04 (glibc 2.35),
+  which runs on 22.04, 24.04, Debian 12, and most current distros. (Found by running the published
+  binary end-to-end on a real machine — exactly the kind of packaging issue tests on the build host
+  never surface.) A fully static (musl) "runs on any Linux" build is tracked for a later release.
+
 ## [v0.1.20] — 2026-06-06
 
 `vigil-hub setup --all` protects everything in one command — closing the last "download → directly

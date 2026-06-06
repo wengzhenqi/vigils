@@ -8,6 +8,20 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.21] — 2026-06-06
+
+修复 Linux CLI,使其在 Ubuntu 22.04 LTS、Debian 12 及多数现行发行版上真正能跑 —— 此前的 Linux 构建
+静默要求了比这些系统更新的 glibc 版本。
+
+### 修复
+
+- **Linux CLI 现在在 glibc 2.35+(Ubuntu 22.04 LTS、Debian 12……)上可运行。** `vigils-cli-linux-x64`
+  二进制此前在最新 CI runner(Ubuntu 24.04)上构建,因而要求 `GLIBC_2.39`,在更老系统上启动即报
+  `version 'GLIBC_2.39' not found` 而失败 —— 包括开发者最常用的 Ubuntu 22.04 LTS。现在 Linux CLI 改在
+  Ubuntu 22.04(glibc 2.35)上构建,可在 22.04、24.04、Debian 12 及多数现行发行版运行。(由在真实机器上
+  端到端运行已发布二进制时发现 —— 正是构建主机上的测试永远暴露不出的打包问题。)完全静态(musl)的
+  "任何 Linux 都能跑"构建作为后续 release 的跟踪项。
+
 ## [v0.1.20] — 2026-06-06
 
 `vigil-hub setup --all` 一条命令全保护 —— 闭合"download → 直接得到保护"的最后一个缺口(此前全保护需跑两条

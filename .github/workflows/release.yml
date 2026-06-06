@@ -87,7 +87,13 @@ jobs:
       matrix:
         include:
           # plat = 面向用户的友好平台名(替代 Rust target triple,新用户更易辨认下载哪个)
-          - { os: ubuntu-latest,  target: x86_64-unknown-linux-gnu,  plat: linux-x64,   suffix: "",     archive: tar.gz }
+          # ★ linux CLI 用 **ubuntu-22.04**(glibc 2.35)而非 ubuntu-latest(24.04=glibc 2.39):
+          #   真机 E2E(D15)发现 ubuntu-latest 产物要求 GLIBC_2.39,在 Ubuntu 22.04 LTS / Debian 12 /
+          #   多数现行发行版上直接 `version GLIBC_2.39 not found` 跑不起来 = 采用毒药。22.04 把 glibc 地板
+          #   拉到 2.35,覆盖 22.04 LTS(支持到 2027)+ 24.04 + Debian 12 等主流。更老(20.04/RHEL8)的
+          #   通用覆盖留 musl 静态(future)。CLI 无 GUI 依赖,在 22.04 构建无碍(desktop 因 webkit2gtk-4.1
+          #   仍须 24.04,见 desktop job)。
+          - { os: ubuntu-22.04,   target: x86_64-unknown-linux-gnu,  plat: linux-x64,   suffix: "",     archive: tar.gz }
           - { os: macos-latest,   target: aarch64-apple-darwin,      plat: macos-arm64, suffix: "",     archive: tar.gz }
           - { os: windows-latest, target: x86_64-pc-windows-msvc,    plat: windows-x64, suffix: ".exe", archive: zip }
     runs-on: ${{ matrix.os }}
@@ -97,7 +103,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Linux deps (keyring / secret-service)
-        if: matrix.os == 'ubuntu-latest'
+        # robust:按 runner OS 判定而非钉死版本字符串(改 runner 版本不漏装 = 不静默断 keyring 链)。
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config libssl-dev
