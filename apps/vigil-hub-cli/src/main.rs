@@ -228,9 +228,11 @@ fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match cli.command {
         None => {
+            // 真实 crate 版本(编译期 CARGO_PKG_VERSION),非内部迭代标记 —— 用户看到的是
+            // 发布版本号(如 v0.1.15),既不误导也不泄漏内部 `I0x` 迭代术语。
             eprintln!(
                 "vigil-hub {} — MCP proxy + CLI. Use --help for subcommands.",
-                vigil_mcp::ITERATION
+                concat!("v", env!("CARGO_PKG_VERSION"))
             );
             std::process::ExitCode::SUCCESS
         }
