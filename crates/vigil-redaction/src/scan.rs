@@ -376,11 +376,15 @@ pub(crate) fn risk_of(kind: &str) -> u32 {
 /// 替换文案走 `PrivacyLabel::as_str()`(稳定契约);未识别 kind 降级用原字面量,
 /// 保证不丢信息。
 ///
-/// **注**:当前 `merge_findings` 已去掉 Hard 重叠的 Model,正常 span 不交叠;
-/// 但防御性考虑 —— 若未来扩 Model 规则允许非重叠但紧邻,本排序仍正确。
-/// 若真出现重叠(例如多条 Hard 同位命中),按 start 降序处理,前面的替换不影响
-/// 后面(index 大的 span 不在 index 小的替换区之外)—— Stage 1 下 HARD_RULES 内部
-/// 不出现跨规则同位重叠,该边界由 ISS-008 进一步加固。
+/// **重叠 span 的 leak 安全性(D16 审计修正)**:`merge_findings` 已去掉与 Hard 重叠的
+/// Model,但 **Hard×Hard 内部确实会重叠** —— 最常见 `env_assignment` 匹配整段 `KEY=secret`、
+/// 同时内层硬规则(`github_token`/`database_url`/…)匹配 `secret` 部分(此前注释误称"不出现
+/// 跨规则同位重叠",已证伪)。本实现对重叠**仍 leak-safe**,依据:① 按 start **降序**处理,
+/// 内层(start 更大)secret **先**被 `replace_range` 覆盖;② 外层 `env_assignment`(start 更小、
+/// 跨度更长)随后因 `end > out.len()`(内层替换缩短了串)被**跳过**,只留下非 secret 的 `KEY=`
+/// 前缀/尾部可见。即"真正的 secret 字节总被内层先覆盖"。与网关路径 `redact_string`(D16 改用
+/// 单遍 + 并集合并)是**两条独立实现**,本路径靠"内层先替换 + 越界跳过"达成同等 leak 安全
+/// (非并集合并);`overlapping_hard_spans_no_leak` 回归测试锁定该不变量,防未来规则改动破坏。
 fn build_redacted_text(input: &str, findings: &[Finding]) -> String {
     // sort 副本,不改 caller 给的 findings;span.0 降序(右→左替换避免 index 漂移)。
     // v0.13:rust 1.95 clippy::unnecessary_sort_by 推荐用 sort_by_key + Reverse 表达。
@@ -715,6 +719,41 @@ mod tests {
         let merged2 = merge_findings(&hard, &model2);
         let s2 = aggregate_risk(&merged2);
         assert_eq!(s2.total_risk_delta, 20, "非重叠时应 Hard + Model 累加");
+    }
+
+    // ──────────────── D16 审计:重叠 Hard span 的 leak 安全性回归 ────────────────
+    /// `env_assignment` 包裹内层硬 secret(`KEY=ghp_...`)会让两条 Hard 规则同位重叠。
+    /// 锁定 `build_redacted_text` 在此重叠下:① 绝不泄漏内层硬 secret;② 占位符良构
+    /// (无 D16 那种破碎 `] github_token]`)。本路径靠"内层(start 更大)先 replace_range +
+    /// 外层越界跳过"达成 leak 安全,而非并集合并 —— 此测试防未来规则改动破坏该不变量。
+    #[test]
+    fn overlapping_hard_spans_no_leak() {
+        let gh = "ghp_aBcD1234567890aBcD1234567890aBcD1234"; // 40 字符硬指纹(非真实 secret)
+        for input in [
+            format!("api_token={gh}"),        // env_assignment 与 github 共终点
+            format!("token={gh}.suffixdata"), // github 内层结束于 env 之前(非共终点)
+            format!("a={gh} b={gh}"),         // 两段独立重叠组
+        ] {
+            let r = scan_text(&input).unwrap();
+            assert!(
+                !r.redacted_text.contains(gh),
+                "内层硬 secret 泄漏:in={input:?} out={:?}",
+                r.redacted_text
+            );
+            // 占位符良构:`[REDACTED` 与 `]` 数量相等(D16 破碎占位符会不等)
+            let opens = r.redacted_text.matches("[REDACTED").count();
+            let closes = r.redacted_text.matches(']').count();
+            assert_eq!(
+                opens, closes,
+                "占位符不配对(破碎):in={input:?} out={:?}",
+                r.redacted_text
+            );
+            assert!(
+                opens >= 1,
+                "应至少一处脱敏:in={input:?} out={:?}",
+                r.redacted_text
+            );
+        }
     }
 
     // ──────────────────────────── v0.3 pub API 不变回归 ────────────────────────────
