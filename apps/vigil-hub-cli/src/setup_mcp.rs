@@ -18,8 +18,13 @@
 //! - 用户须**关闭 Claude Code 后再 `--apply`**(避免与其并发写 claude.json 的 lost-update;有备份兜底)。
 //!
 //! # 设计基线(已定)
-//! - **默认 enforce** posture(Codex audit 论证:monitor 自动放行恰恰该拦的风险动作 → 不作 turnkey
-//!   默认;monitor 保持显式 opt-in)。故预览的 wrap argv **不含** `--monitor`。
+//! - **默认 monitor** posture(D10,评估增量 #1):被 wrap 的是用户自配**第三方** server,其工具名不在
+//!   firewall effect 词表 → enforce 下一律 default-deny = 真实 server **全不可用**(turnkey 接入即打挂
+//!   用户工作流 = 采用毒药)。monitor 保留全部硬地板(裸 secret 拦截 + 结果脱敏可逆往返 + 显式 Deny +
+//!   descriptor drift),只把 default-deny **地板**降级为观察放行。故默认预览/落盘的 wrap argv **含**
+//!   `--monitor`;`--enforce`(`monitor = !enforce`)是显式硬化档(default-deny + 阻塞审批),供已知
+//!   工具集 / 自建 server / 高保障场景。详见 `main.rs` `CliSetupArgs::enforce` doc + 评估文档
+//!   `docs/strategy/mcp-gateway-design-assessment.md`。
 //! - 改写形态:`vigil-hub wrap --server-id <名> [--env-key <K>]... --vigil-managed-mcp -- <原 cmd> <原 args>`。
 //! - **env key-only(指 wrap argv,非整个条目)**:改写产出的 **wrap 命令行**只含 env **键名**
 //!   (`--env-key K`,值由 wrap 运行时从自身 env 读),**argv 里绝不出现 secret 值**。注意:被包裹
@@ -216,17 +221,24 @@ fn classify_one(name: &str, entry: &Value) -> McpServerClass {
     }
 }
 
-/// 为一个 Wrappable server 构造 wrap 改写后的**完整 argv**(预览 / 未来 mutation 共用)。
-/// 返回 `[exe, "wrap", "--server-id", name, ("--env-key" K)*, sentinel, "--", orig_cmd, orig_args*]`。
-/// 配置落地时:`[0]` = 新 `command`,`[1..]` = 新 `args`。enforce posture(**不**加 `--monitor`)。
+/// 为一个 Wrappable server 构造 wrap 改写后的**完整 argv**(预览 / mutation 共用)。
+/// 返回 `[exe, "wrap", "--server-id", name, ("--env-key" K)*, ("--monitor")?, sentinel, "--", orig_cmd, orig_args*]`。
+/// 配置落地时:`[0]` = 新 `command`,`[1..]` = 新 `args`。
+///
+/// `monitor`:**默认 true**(setup --mcp 的默认姿态)。理由(战略评估三视角收敛,见
+/// docs/strategy/mcp-gateway-design-assessment.md):firewall 对未分类第三方工具空转 → enforce 只会
+/// default-deny **破坏**被包裹的真实 server;且 93% 审批提示被无视 = 审批门是剧场;而真价值
+/// (result 脱敏 + 裸 secret 拦截 + 审计)在 monitor 也全跑。**可用的 monitor >> 被绕过的 enforce**。
+/// `monitor=false` = `--enforce` 硬化档(显式 opt-in:default-deny + 阻塞审批)。
 pub fn wrapped_argv(
     exe: &str,
     name: &str,
     command: &str,
     args: &[String],
     env_keys: &[String],
+    monitor: bool,
 ) -> Vec<String> {
-    let mut out = Vec::with_capacity(6 + env_keys.len() * 2 + args.len());
+    let mut out = Vec::with_capacity(7 + env_keys.len() * 2 + args.len());
     out.push(exe.to_string());
     out.push("wrap".into());
     out.push("--server-id".into());
@@ -234,6 +246,9 @@ pub fn wrapped_argv(
     for k in env_keys {
         out.push("--env-key".into());
         out.push(k.clone());
+    }
+    if monitor {
+        out.push("--monitor".into()); // 默认观察姿态(脱敏+审计+裸 secret 拦截,非阻塞)
     }
     out.push(VIGIL_MANAGED_MCP_MARKER.into()); // sentinel(幂等 + uninstall 识别)
     out.push("--".into()); // 分隔:之后是被包裹 server 的原 argv(逐字保留)
@@ -305,6 +320,9 @@ pub struct McpPreviewReport {
     /// local scope(`projects.<path>.mcpServers`)分类结果:`(project_path, 分类)`。
     /// `--apply` 默认也保护这些(用项目限定 server-id);`--user-scope-only` 跳过。
     pub local_servers: Vec<(String, McpServerClass)>,
+    /// 将写入 wrap argv 的守门姿态:`true` = monitor(默认,观察放行+脱敏+审计+裸 secret 拦截),
+    /// `false` = enforce(default-deny 硬拦)。预览据此渲染真实 argv,与 `--apply` 落盘一致。
+    pub monitor: bool,
 }
 
 impl McpPreviewReport {
@@ -327,7 +345,7 @@ impl McpPreviewReport {
 
 /// 读真实 `~/.claude.json`(IO 边界)→ 枚举 + 分类,产出只读预览报告。**不写任何东西**。
 /// `home` / `exe` 注入 → 测试可指向 fixture 而**绝不**碰真实用户配置。
-pub fn run_preview(home: &Path, exe: &str) -> Result<McpPreviewReport, SetupError> {
+pub fn run_preview(home: &Path, exe: &str, monitor: bool) -> Result<McpPreviewReport, SetupError> {
     let path = claude_json_path(home);
     let cfg = read_claude_json(&path)?;
     let (exists, servers, local_servers) = match cfg {
@@ -344,17 +362,19 @@ pub fn run_preview(home: &Path, exe: &str) -> Result<McpPreviewReport, SetupErro
         exe: exe.to_string(),
         servers,
         local_servers,
+        monitor,
     })
 }
 
 /// CLI 入口:解析用户 home + 本进程 exe → [`run_preview`]。生产路径;测试走 `run_preview` 注入。
-pub fn run() -> Result<McpPreviewReport, SetupError> {
+/// `monitor` 反映将要落盘的姿态(由 CLI `--enforce` 反推:`monitor = !enforce`,默认 monitor)。
+pub fn run(monitor: bool) -> Result<McpPreviewReport, SetupError> {
     let home = dirs::home_dir().ok_or(SetupError::MissingHomeDir)?;
     let exe = std::env::current_exe()
         .map_err(|_| SetupError::MissingCurrentExe)?
         .to_string_lossy()
         .to_string();
-    run_preview(&home, &exe)
+    run_preview(&home, &exe, monitor)
 }
 
 // ============================ mutation 增量(D3 增量 2) ============================
@@ -374,8 +394,9 @@ fn wrap_entry(
     command: &str,
     args: &[String],
     env_keys: &[String],
+    monitor: bool,
 ) -> Value {
-    let argv = wrapped_argv(exe, name, command, args, env_keys);
+    let argv = wrapped_argv(exe, name, command, args, env_keys, monitor);
     let mut e = original.clone();
     if let Some(obj) = e.as_object_mut() {
         // **不**插入 `type:stdio`(Medium,Codex mutation review):clone 已保留原 type
@@ -438,6 +459,7 @@ fn unwrap_entry(wrapped: &Value) -> Option<Value> {
 fn wrap_servers_object(
     servers: &mut serde_json::Map<String, Value>,
     exe: &str,
+    monitor: bool,
     id_for: impl Fn(&str) -> String,
 ) -> usize {
     let mut count = 0;
@@ -454,7 +476,7 @@ fn wrap_servers_object(
         } = classify_one(&name, &entry)
         {
             let sid = id_for(&name);
-            let wrapped = wrap_entry(&entry, exe, &sid, &command, &args, &env_keys);
+            let wrapped = wrap_entry(&entry, exe, &sid, &command, &args, &env_keys, monitor);
             servers.insert(name, wrapped);
             count += 1;
         }
@@ -484,12 +506,13 @@ pub fn apply_wrap_to_config(
     cfg: &Value,
     exe: &str,
     user_scope_only: bool,
+    monitor: bool,
 ) -> (Value, usize, usize) {
     let mut new = cfg.clone();
     let user_changed = new
         .get_mut("mcpServers")
         .and_then(Value::as_object_mut)
-        .map(|servers| wrap_servers_object(servers, exe, user_scope_server_id))
+        .map(|servers| wrap_servers_object(servers, exe, monitor, user_scope_server_id))
         .unwrap_or(0);
 
     let mut local_changed = 0;
@@ -499,7 +522,7 @@ pub fn apply_wrap_to_config(
                 // key 与 value 借用分离;clone 项目路径供闭包派生限定 id,避免与 servers 的 &mut 纠缠。
                 let proj_path = proj_path.clone();
                 if let Some(servers) = proj.get_mut("mcpServers").and_then(Value::as_object_mut) {
-                    local_changed += wrap_servers_object(servers, exe, |name| {
+                    local_changed += wrap_servers_object(servers, exe, monitor, |name| {
                         local_scope_server_id(&proj_path, name)
                     });
                 }
@@ -583,6 +606,7 @@ pub fn run_apply(
     exe: &str,
     dry_run: bool,
     user_scope_only: bool,
+    monitor: bool,
 ) -> Result<McpApplyReport, SetupError> {
     let path = claude_json_path(home);
     let cfg = match read_claude_json(&path)? {
@@ -608,7 +632,8 @@ pub fn run_apply(
     let stamp = std::fs::metadata(&path)
         .ok()
         .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
-    let (new_cfg, changed, local_changed) = apply_wrap_to_config(&cfg, exe, user_scope_only);
+    let (new_cfg, changed, local_changed) =
+        apply_wrap_to_config(&cfg, exe, user_scope_only, monitor);
     let backup = if !dry_run && (changed + local_changed) > 0 {
         crate::setup::atomic_write_with_backup(&path, &new_cfg, stamp)?
     } else {
@@ -715,28 +740,47 @@ mod tests {
     }
 
     #[test]
-    fn wrapped_argv_is_enforce_and_env_key_only() {
+    fn wrapped_argv_posture_and_env_key_only() {
+        // 默认 monitor 姿态(turnkey:第三方 server 可用,仍守脱敏+审计+裸 secret 拦截硬地板)。
         let argv = wrapped_argv(
             "C:/Vigil/vigil-hub.exe",
             "filesystem",
             "npx",
             &["-y".into(), "/data".into()],
             &["FOO_TOKEN".into()],
+            true, // monitor
         );
-        // 形态:exe wrap --server-id filesystem --env-key FOO_TOKEN --vigil-managed-mcp -- npx -y /data
+        // 形态:exe wrap --server-id filesystem --env-key FOO_TOKEN --monitor --vigil-managed-mcp -- npx -y /data
         assert_eq!(argv[0], "C:/Vigil/vigil-hub.exe");
         assert_eq!(argv[1], "wrap");
         assert_eq!(argv[2], "--server-id");
         assert_eq!(argv[3], "filesystem");
         assert!(argv.windows(2).any(|w| w == ["--env-key", "FOO_TOKEN"]));
-        // enforce:绝不含 --monitor(turnkey 默认不自动放行风险动作)
-        assert!(!argv.iter().any(|a| a == "--monitor"));
+        // monitor 默认:必含 --monitor(观察放行,turnkey 接入即可用)
+        assert!(argv.iter().any(|a| a == "--monitor"));
         // sentinel + 分隔符 + 原 argv 逐字保留
         let sep = argv.iter().position(|a| a == "--").unwrap();
         assert_eq!(argv[sep - 1], VIGIL_MANAGED_MCP_MARKER);
         assert_eq!(&argv[sep + 1..], &["npx", "-y", "/data"]);
         // env 值绝不出现在 argv(只键名)
         assert!(!argv.iter().any(|a| a.contains("shh")));
+
+        // 显式 enforce(`--enforce` 反推 monitor=false):default-deny 硬拦,绝不含 --monitor。
+        let enforce_argv = wrapped_argv(
+            "C:/Vigil/vigil-hub.exe",
+            "filesystem",
+            "npx",
+            &["-y".into(), "/data".into()],
+            &["FOO_TOKEN".into()],
+            false, // enforce
+        );
+        assert!(!enforce_argv.iter().any(|a| a == "--monitor"));
+        // env-key-only + 逐字保留在两种姿态下都成立(姿态切换不动这些不变量)
+        assert!(enforce_argv
+            .windows(2)
+            .any(|w| w == ["--env-key", "FOO_TOKEN"]));
+        let esep = enforce_argv.iter().position(|a| a == "--").unwrap();
+        assert_eq!(&enforce_argv[esep + 1..], &["npx", "-y", "/data"]);
     }
 
     #[test]
@@ -863,6 +907,7 @@ mod tests {
             "npx",
             &["-y".into(), "pkg".into(), "/data".into()],
             &["TOKEN".into()],
+            true, // monitor:顺带验证 --monitor flag 不破坏 unwrap 的 sentinel 锚定还原
         );
         assert_eq!(wrapped["command"], json!("C:/v/vigil-hub.exe"));
         assert_eq!(
@@ -886,7 +931,15 @@ mod tests {
     fn wrap_unwrap_does_not_add_type_when_absent() {
         // 原条目**无 type**(Codex Medium):wrap 不加 type → unwrap 后仍无 type(byte-faithful)。
         let original = json!({"command": "npx", "args": ["x"]});
-        let wrapped = wrap_entry(&original, "vigil-hub", "fs", "npx", &["x".into()], &[]);
+        let wrapped = wrap_entry(
+            &original,
+            "vigil-hub",
+            "fs",
+            "npx",
+            &["x".into()],
+            &[],
+            true,
+        );
         assert!(
             wrapped.get("type").is_none(),
             "wrap 不得给原本无 type 的条目加 type"
@@ -919,6 +972,7 @@ mod tests {
             "tool",
             &["a".into(), "--".into(), "b".into()],
             &[],
+            true, // monitor:--monitor + name="--" + args 含 "--" 三重压测 sentinel 锚定还原
         );
         let restored = unwrap_entry(&wrapped).expect("must unwrap despite -- collisions");
         assert_eq!(restored["command"], json!("tool"));
@@ -945,8 +999,8 @@ mod tests {
         )
         .unwrap();
 
-        // apply
-        let rep = run_apply(home, "vigil-hub", false, false).unwrap();
+        // apply(默认 monitor 姿态:turnkey 接入即可用)
+        let rep = run_apply(home, "vigil-hub", false, false, true).unwrap();
         assert_eq!(rep.changed, 1);
         assert_eq!(rep.local_changed, 0, "无 local scope server");
         assert!(rep.backup.is_some(), "改写应产生备份");
@@ -957,6 +1011,16 @@ mod tests {
             .unwrap()
             .iter()
             .any(|a| a == "--vigil-managed-mcp"));
+        // monitor 默认必须经整条 apply 链(run_apply→apply_wrap_to_config→wrap_servers_object→
+        // wrap_entry→wrapped_argv)真落到磁盘 argv —— 守"turnkey 默认 monitor"不被中间层吃掉。
+        assert!(
+            after["mcpServers"]["fs"]["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a == "--monitor"),
+            "默认 monitor 姿态必须写入 wrap argv"
+        );
         assert_eq!(
             after["mcpServers"]["fs"]["env"],
             json!({"T": "v"}),
@@ -995,7 +1059,7 @@ mod tests {
         fs::write(&claude, initial.to_string()).unwrap();
 
         // 默认:user(fs)+ local(local_srv)都被保护
-        let rep = run_apply(home, "vigil-hub", false, false).unwrap();
+        let rep = run_apply(home, "vigil-hub", false, false, true).unwrap();
         assert_eq!(rep.changed, 1, "user scope fs 被 wrap");
         assert_eq!(rep.local_changed, 1, "local scope local_srv 被 wrap");
         assert_eq!(rep.local_skipped, 0);
@@ -1048,7 +1112,7 @@ mod tests {
 
         // --user-scope-only:只 wrap user,跳过 local,诚实报告 local_skipped
         fs::write(&claude, initial.to_string()).unwrap();
-        let rep2 = run_apply(home, "vigil-hub", false, true).unwrap();
+        let rep2 = run_apply(home, "vigil-hub", false, true, true).unwrap();
         assert_eq!(rep2.changed, 1, "user scope fs 被 wrap");
         assert_eq!(rep2.local_changed, 0, "--user-scope-only 跳过 local");
         assert_eq!(
@@ -1060,6 +1124,35 @@ mod tests {
             after2["projects"]["/proj"]["mcpServers"]["local_srv"]["command"],
             json!("uvx"),
             "--user-scope-only 下 local server 原样未动"
+        );
+    }
+
+    #[test]
+    fn apply_enforce_posture_omits_monitor_flag_end_to_end() {
+        // `--enforce`(monitor=false)经整条 apply 链落盘后,wrap argv **绝不**含 --monitor →
+        // 网关进 enforce(default-deny 硬拦)。与默认 monitor 路径对照,守姿态开关真正生效到磁盘。
+        use std::fs;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let claude = home.join(".claude.json");
+        fs::write(
+            &claude,
+            json!({"mcpServers": {"fs": {"command": "npx", "args": ["-y", "pkg"]}}}).to_string(),
+        )
+        .unwrap();
+
+        let rep = run_apply(home, "vigil-hub", false, false, false).unwrap(); // monitor=false=enforce
+        assert_eq!(rep.changed, 1);
+        let after: Value = serde_json::from_str(&fs::read_to_string(&claude).unwrap()).unwrap();
+        let args = after["mcpServers"]["fs"]["args"].as_array().unwrap();
+        // enforce:wrap 仍生效(--vigil-managed-mcp 在),但绝无 --monitor(default-deny 硬拦)
+        assert!(
+            args.iter().any(|a| a == "--vigil-managed-mcp"),
+            "wrap 仍生效"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--monitor"),
+            "enforce 姿态绝不含 --monitor(否则降级为观察放行)"
         );
     }
 

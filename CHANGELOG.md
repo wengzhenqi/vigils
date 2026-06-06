@@ -8,6 +8,34 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.17] — 2026-06-06
+
+`vigil-hub setup --mcp` now defaults to **monitor** posture, so wrapping your existing MCP servers
+no longer breaks them — the turnkey "download → protected" path is usable out of the box, while
+keeping every hard protection on.
+
+### Changed
+
+- **`setup --mcp` default posture is now monitor, not enforce.** The servers this wraps are your
+  own third-party MCP servers (filesystem, git, etc.). Vigil's firewall can only classify the
+  effects of tools it recognizes, so a third-party tool produces no effects and — under the old
+  `enforce` default — hit the default-deny floor and was **blocked**. In practice that meant the
+  one-command setup could make your existing servers stop working. Monitor posture keeps the
+  servers usable while still enforcing every **hard floor**: raw-secret input is still blocked,
+  tool results are still redacted (reversible round-trip — the model sees placeholders), explicit
+  deny rules still deny, a changed/drifted tool descriptor is still not auto-approved, and every
+  call is still written to the tamper-evident audit ledger. Research backs this: ~93% of approval
+  prompts are approved unread, so deterministic redaction protects you more than a blocking gate
+  that gets click-through-approved anyway.
+- **New `--enforce` flag for the hardened, default-deny posture.** If you want strict gating —
+  e.g. for a known/fixed tool set, a server you built yourself, or a high-assurance environment —
+  run `vigil-hub setup --mcp --apply --enforce`. The preview (`vigil-hub setup --mcp`) and apply
+  output now state the exact posture that will be written, so there's no ambiguity about whether
+  you're in monitor or enforce.
+
+This is reversible the same way as before: `vigil-hub setup --mcp --uninstall` restores your
+original config byte-for-byte.
+
 ## [v0.1.16] — 2026-06-06
 
 Makes wrapped MCP servers actually usable in monitor mode, plus security hardening — found by

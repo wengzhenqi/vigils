@@ -131,7 +131,7 @@ struct CliSetupArgs {
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// **MCP turnkey**:把 Claude Code(`~/.claude.json`)的 stdio MCP server 改写为 `vigil-hub wrap`
-    /// 网关(default enforce)。**默认保护 user scope(顶层 mcpServers)+ local scope(`projects.*`,
+    /// 网关(**默认 monitor 姿态**)。**默认保护 user scope(顶层 mcpServers)+ local scope(`projects.*`,
     /// `claude mcp add` 默认写这里)**;local scope 用项目限定 server-id 防跨项目同名身份塌缩。
     /// `--mcp` 单用 = **只读预览**;`--mcp --apply` 真改写;`--mcp --uninstall` 还原(两 scope);
     /// `--dry-run` 只算不写。
@@ -144,6 +144,17 @@ struct CliSetupArgs {
     /// (让它们**不被保护**;CLI 会诚实报告被跳过的数量)。默认两个 scope 都保护。
     #[arg(long = "user-scope-only")]
     user_scope_only: bool,
+    /// 配合 `--mcp`:把 wrap 网关姿态从默认 **monitor** 升级为 **enforce**(default-deny 硬拦)。
+    ///
+    /// **为何默认 monitor 而非 enforce**:被 wrap 的是用户自配的**第三方** MCP server,其工具名不在
+    /// Vigil 的 effect 提取词表内 → 提取不出 effect → enforce 下一律 default-deny = 真实 server **全部
+    /// 不可用**(turnkey 一键接入直接打挂用户现有工作流 = 采用毒药)。monitor 姿态保留全部硬地板
+    /// (裸 secret 拦截 + 结果脱敏可逆往返 + 显式 Deny + descriptor drift),只把 default-deny **地板**
+    /// 降级为观察放行 —— 实际交付的价值(脱敏 + 审计 + 输入拦截)全在,且 server 可用。Codex 评估
+    /// 与三方研究一致(93% 审批被未读即批 → 审批门是剧场;确定性脱敏 >> 阻塞审批)。
+    /// 想要硬拦语义(已知工具集 / 自建 server / 高保障场景)再显式 `--enforce`。
+    #[arg(long)]
+    enforce: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -355,14 +366,18 @@ fn setup_mcp_dispatch(args: &CliSetupArgs) -> Result<std::process::ExitCode, set
         .map_err(|_| setup::SetupError::MissingCurrentExe)?
         .to_string_lossy()
         .to_string();
+    // wrap 网关姿态:默认 monitor(观察放行+脱敏+审计+裸 secret 拦截);`--enforce` 升级为 default-deny
+    // 硬拦。第三方 server 工具名不在 effect 词表 → enforce 一律 default-deny = server 全不可用,故默认 monitor
+    // 让 turnkey 接入即可用且仍守全部硬地板(详见 CliSetupArgs::enforce doc)。
+    let monitor = !args.enforce;
     if args.uninstall {
         let rep = setup_mcp::run_uninstall(&home, args.dry_run)?;
         Ok(print_mcp_apply(&rep, "uninstall"))
     } else if args.apply {
-        let rep = setup_mcp::run_apply(&home, &exe, args.dry_run, args.user_scope_only)?;
+        let rep = setup_mcp::run_apply(&home, &exe, args.dry_run, args.user_scope_only, monitor)?;
         Ok(print_mcp_apply(&rep, "apply"))
     } else {
-        let rep = setup_mcp::run_preview(&home, &exe)?;
+        let rep = setup_mcp::run_preview(&home, &exe, monitor)?;
         Ok(print_mcp_preview(&rep))
     }
 }
@@ -408,7 +423,12 @@ fn print_mcp_apply(r: &setup_mcp::McpApplyReport, op: &str) -> std::process::Exi
 /// 打印 `setup --mcp` 只读预览(ASCII-safe,cp936/cp437 不乱码)。返回退出码。
 /// 渲染单个 server 分类的预览行(user scope 与 local scope 各调一次)。`project_path` = `Some(p)`
 /// 表示 local scope(用项目限定 server-id 展示真实改写 argv),`None` 表示 user scope(裸 name)。
-fn print_mcp_server_preview(exe: &str, project_path: Option<&str>, class: &McpServerClass) {
+fn print_mcp_server_preview(
+    exe: &str,
+    project_path: Option<&str>,
+    class: &McpServerClass,
+    monitor: bool,
+) {
     match class {
         McpServerClass::Wrappable {
             name,
@@ -421,7 +441,7 @@ fn print_mcp_server_preview(exe: &str, project_path: Option<&str>, class: &McpSe
                 Some(p) => setup_mcp::local_scope_server_id(p, name),
                 None => setup_mcp::user_scope_server_id(name),
             };
-            let argv = setup_mcp::wrapped_argv(exe, &wrap_id, command, args, env_keys);
+            let argv = setup_mcp::wrapped_argv(exe, &wrap_id, command, args, env_keys, monitor);
             println!("  [WRAP] {name}");
             // 预览里的 command/args 可能含用户内联的 token(如 `--api-key sk-...`)。过硬指纹 scrub
             // 再展示,守"secrets 绝不进 UI/日志"不变量(Codex setup_mcp review hygiene)。
@@ -467,7 +487,7 @@ fn print_mcp_preview(r: &setup_mcp::McpPreviewReport) -> std::process::ExitCode 
             r.wrappable_count()
         );
         for s in &r.servers {
-            print_mcp_server_preview(&r.exe, None, s);
+            print_mcp_server_preview(&r.exe, None, s, r.monitor);
         }
     }
     // local scope(projects.<path>.mcpServers)—— claude mcp add 默认写这里
@@ -482,12 +502,26 @@ fn print_mcp_preview(r: &setup_mcp::McpPreviewReport) -> std::process::ExitCode 
         );
         println!("   don't share audit/approval identity)");
         for (proj, s) in &r.local_servers {
-            print_mcp_server_preview(&r.exe, Some(proj), s);
+            print_mcp_server_preview(&r.exe, Some(proj), s, r.monitor);
         }
     }
     println!();
-    println!("  Default posture: ENFORCE (risky tool calls need approval; add --monitor for");
-    println!("  non-blocking audit-only). Apply with:  vigil-hub setup --mcp --apply");
+    // 姿态提示反映将落盘的真实姿态(默认 monitor;`--enforce` 升级硬拦)。
+    if r.monitor {
+        println!("  Default posture: MONITOR (servers stay usable; result redaction + raw-secret");
+        println!(
+            "  block + tamper-evident audit always on; add --enforce for default-deny gating)."
+        );
+    } else {
+        println!("  Posture: ENFORCE (default-deny; third-party tools without known effects are");
+        println!(
+            "  blocked -- use only for known/self-built servers). Omit --enforce for monitor."
+        );
+    }
+    println!(
+        "  Apply with:  vigil-hub setup --mcp --apply{}",
+        if r.monitor { "" } else { " --enforce" }
+    );
     println!(
         "  (protects user + local scope; --user-scope-only skips local; --uninstall reverts)."
     );

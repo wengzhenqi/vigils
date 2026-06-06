@@ -8,6 +8,26 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.17] — 2026-06-06
+
+`vigil-hub setup --mcp` 现在默认 **monitor** 姿态,包裹你已有的 MCP server 不再把它们打挂 —— 一键
+"下载 → 受保护"开箱即用,同时所有硬保护照常生效。
+
+### 变更
+
+- **`setup --mcp` 默认姿态改为 monitor,而非 enforce。** 这条命令包裹的是你自己的第三方 MCP server
+  (filesystem、git 等)。Vigil 防火墙只能分类它识别的工具的 effect,第三方工具提取不出 effect ——
+  在旧的 `enforce` 默认下撞上 default-deny 兜底而被**拦截**。实际后果是:一键接入可能让你现有的 server
+  停止工作。monitor 姿态让 server 保持可用,同时仍强制每一道**硬地板**:裸 secret 输入仍被拦截,工具
+  结果仍被脱敏(可逆往返 —— 模型只看到占位符),显式拒绝规则仍拒绝,变更/漂移的工具 descriptor 仍不被
+  自动批准,每一次调用仍写入防篡改审计账本。研究支持这一取舍:约 93% 的审批提示被未读即批,故确定性
+  脱敏比"反正会被点批"的阻塞门更能保护你。
+- **新增 `--enforce` 标志,启用硬化的 default-deny 姿态。** 若你要严格守门 —— 例如已知/固定的工具集、
+  自建的 server、或高保障环境 —— 运行 `vigil-hub setup --mcp --apply --enforce`。预览
+  (`vigil-hub setup --mcp`)与 apply 输出现在都会明示将要写入的确切姿态,monitor 还是 enforce 一目了然。
+
+可逆性与此前一致:`vigil-hub setup --mcp --uninstall` 会逐字节还原你的原始配置。
+
 ## [v0.1.16] — 2026-06-06
 
 让被包裹的 MCP server 在 monitor 模式下真正可用,外加安全加固 —— 由对真实第三方 MCP server 的端到端
