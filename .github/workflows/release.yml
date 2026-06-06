@@ -87,15 +87,17 @@ jobs:
       matrix:
         include:
           # plat = 面向用户的友好平台名(替代 Rust target triple,新用户更易辨认下载哪个)
-          # ★ linux CLI 用 **ubuntu-22.04**(glibc 2.35)而非 ubuntu-latest(24.04=glibc 2.39):
-          #   真机 E2E(D15)发现 ubuntu-latest 产物要求 GLIBC_2.39,在 Ubuntu 22.04 LTS / Debian 12 /
-          #   多数现行发行版上直接 `version GLIBC_2.39 not found` 跑不起来 = 采用毒药。22.04 把 glibc 地板
-          #   拉到 2.35,覆盖 22.04 LTS(支持到 2027)+ 24.04 + Debian 12 等主流。更老(20.04/RHEL8)的
-          #   通用覆盖留 musl 静态(future)。CLI 无 GUI 依赖,在 22.04 构建无碍(desktop 因 webkit2gtk-4.1
-          #   仍须 24.04,见 desktop job)。
-          - { os: ubuntu-22.04,   target: x86_64-unknown-linux-gnu,  plat: linux-x64,   suffix: "",     archive: tar.gz }
-          - { os: macos-latest,   target: aarch64-apple-darwin,      plat: macos-arm64, suffix: "",     archive: tar.gz }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc,    plat: windows-x64, suffix: ".exe", archive: zip }
+          # ★ D21:linux CLI 改用 **cargo-zigbuild 锁 glibc 2.17 地板**(target x86_64-unknown-linux-gnu.2.17),
+          #   根治 D15 的 glibc 墙。背景:此前 ubuntu-22.04 构建(glibc 2.35,二进制实际需 GLIBC_2.34)在更老
+          #   发行版上仍 `version GLIBC_2.xx not found` 跑不起来 = 采用毒药 —— Ubuntu≤20.04(2.31)/ Debian≤11
+          #   (2.31)/ RHEL 7-8(2.17-2.28)/ Amazon Linux 2(2.26)全中招。zig 作交叉链接器把 glibc 符号下沉到
+          #   2.17(manylinux2014 同款地板,覆盖近十年几乎所有 glibc 发行版),**零代码改动、功能不减**(keyring/
+          #   libdbus 仍动态链,但对老 glibc 符号)。构建后有 objdump 守门断言地板≤2.17,zigbuild 失灵则整 leg 失败。
+          #   仍跑在 ubuntu-22.04(zig 自带多版本 glibc sysroot,runner OS 不再决定地板)。mac/win 保持 native
+          #   cargo build。bindir:zigbuild 带 --target 时产物落 target/<triple>/release(native build 落 target/release)。
+          - { os: ubuntu-22.04,   target: x86_64-unknown-linux-gnu,  plat: linux-x64,   suffix: "",     archive: tar.gz, bindir: "target/x86_64-unknown-linux-gnu/release" }
+          - { os: macos-latest,   target: aarch64-apple-darwin,      plat: macos-arm64, suffix: "",     archive: tar.gz, bindir: "target/release" }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc,    plat: windows-x64, suffix: ".exe", archive: zip,    bindir: "target/release" }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -109,21 +111,51 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev pkg-config libssl-dev
 
-      - name: Build CLI binaries
+      # D21:zig 作交叉链接器,把 Linux CLI 的 glibc 符号下沉到 2.17 地板(见 matrix 注释)。
+      # ziglang(pip 包,自带 zig 编译器)+ cargo-zigbuild(cargo subcommand,自动探测 `python -m ziglang`)。
+      # 版本钉死保证可复现;仅 Linux leg 需要。
+      - name: Install zig + cargo-zigbuild (Linux glibc 2.17 floor)
+        if: runner.os == 'Linux'
+        run: |
+          pip3 install ziglang==0.13.0
+          cargo install cargo-zigbuild --version 0.19.8 --locked
+
+      - name: Build CLI binaries (Linux — zigbuild glibc 2.17 floor)
+        if: runner.os == 'Linux'
+        run: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17 --bin vigil-hub -p vigil-hub-cli --bin vigil-native-host -p vigil-native-host
+
+      - name: Build CLI binaries (macOS / Windows — native)
+        if: runner.os != 'Linux'
         run: cargo build --release --bin vigil-hub -p vigil-hub-cli --bin vigil-native-host -p vigil-native-host
+
+      # D21 守门:zigbuild 若失灵(地板未下沉),objdump 断言 fail 整 leg,杜绝静默发回高 glibc 二进制。
+      # sort -V 把 max 符号与 GLIBC_2.17 比较:并入后版本升序排,若 tail(最大)仍是 2.17 则 max≤2.17 通过。
+      - name: Verify glibc floor <= 2.17 (any-distro reach guard)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          for bin in vigil-hub vigil-native-host; do
+            path="${{ matrix.bindir }}/$bin"
+            max=$(objdump -T "$path" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V | tail -1)
+            echo "$bin max GLIBC symbol: ${max:-none}"
+            if [ -n "$max" ] && [ "$(printf '%s\nGLIBC_2.17\n' "$max" | sort -V | tail -1)" != "GLIBC_2.17" ]; then
+              echo "::error::glibc floor regression: $bin requires $max (> GLIBC_2.17)"
+              exit 1
+            fi
+          done
 
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         run: |
           set -e
           mkdir -p dist
-          tar -C target/release -czf "dist/vigils-cli-${{ matrix.plat }}.tar.gz" vigil-hub vigil-native-host
+          tar -C "${{ matrix.bindir }}" -czf "dist/vigils-cli-${{ matrix.plat }}.tar.gz" vigil-hub vigil-native-host
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path target/release/vigil-hub.exe, target/release/vigil-native-host.exe -DestinationPath "dist/vigils-cli-${{ matrix.plat }}.zip"
+          Compress-Archive -Path "${{ matrix.bindir }}/vigil-hub.exe", "${{ matrix.bindir }}/vigil-native-host.exe" -DestinationPath "dist/vigils-cli-${{ matrix.plat }}.zip"
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2

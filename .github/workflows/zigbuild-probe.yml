@@ -1,0 +1,51 @@
+name: zigbuild-probe
+
+# D21 临时验证 workflow:在真实 ubuntu-22.04 runner 上验证 cargo-zigbuild glibc 2.17 配方
+# **只构建不发布**(build-only,无 release / tag)。绿了证明 release.yml 的 Linux CLI leg 配方正确,
+# 随即删除本文件。手动 workflow_dispatch 触发。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux deps (keyring / secret-service)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config libssl-dev
+
+      - name: Install zig + cargo-zigbuild (glibc 2.17 floor)
+        run: |
+          pip3 install ziglang==0.13.0
+          cargo install cargo-zigbuild --version 0.19.8 --locked
+
+      - name: Build CLI binaries (zigbuild glibc 2.17 floor)
+        run: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17 --bin vigil-hub -p vigil-hub-cli --bin vigil-native-host -p vigil-native-host
+
+      - name: Verify glibc floor <= 2.17
+        run: |
+          set -e
+          for bin in vigil-hub vigil-native-host; do
+            path="target/x86_64-unknown-linux-gnu/release/$bin"
+            max=$(objdump -T "$path" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sort -V | tail -1)
+            echo "$bin max GLIBC symbol: ${max:-none}"
+            if [ -n "$max" ] && [ "$(printf '%s\nGLIBC_2.17\n' "$max" | sort -V | tail -1)" != "GLIBC_2.17" ]; then
+              echo "::error::$bin requires $max (> GLIBC_2.17)"
+              exit 1
+            fi
+          done
+
+      - name: Upload probe artifact (for local objdump inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-hub-zigbuild-probe
+          path: target/x86_64-unknown-linux-gnu/release/vigil-hub
+          retention-days: 3
