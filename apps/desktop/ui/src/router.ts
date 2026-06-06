@@ -11,8 +11,16 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-rou
  */
 const routes: RouteRecordRaw[] = [
   {
+    // D19:默认落地 = Protection Overview(首屏即见"Vigil 拦下了什么",面向采用)。
     path: "/",
-    redirect: "/approvals",
+    redirect: "/protection",
+  },
+  // D19 — Protection Overview(= CLI inspect protection 的 GUI 等价物)
+  {
+    path: "/protection",
+    name: "protection",
+    component: () => import("@/pages/ProtectionOverview.vue"),
+    meta: { title: "Protection Overview" },
   },
   {
     path: "/approvals",

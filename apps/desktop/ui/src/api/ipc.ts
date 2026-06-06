@@ -584,3 +584,35 @@ export async function replaySession(req: ReplaySessionReq): Promise<SessionRepla
 export async function verifyChain(): Promise<ChainVerifyReport> {
   return await invoke<ChainVerifyReport>("verify_chain");
 }
+
+// ─────────────────────────── D19 Protection Overview ───────────────────────────
+
+/** 对应 Rust `vigil_audit::EventHit`（`ProtectionSummary.recent` 元素，字段已脱敏） */
+export interface ProtectionEventHit {
+  event_id: number;
+  session_id: string;
+  event_type: string;
+  redacted_text: string | null;
+  created_at: number;
+}
+
+/**
+ * 对应 Rust `vigil_audit::ProtectionSummary`（ledger.rs；只读保护成效聚合）。
+ * = CLI `vigil-hub inspect protection` 的 GUI 等价物。
+ * **fail-closed**：`chain_intact=false`（账本被篡改）时 Rust 端强制 `recent=[]`（绝不回显
+ * 可能被注入 secret 的明细），计数仍保留。
+ */
+export interface ProtectionSummary {
+  raw_secrets_blocked: number;
+  tool_result_leaks_detected: number;
+  secret_aliases_unresolved: number;
+  total_events_audited: number;
+  sessions_covered: number;
+  chain_intact: boolean;
+  recent: ProtectionEventHit[];
+}
+
+/** D19：保护成效概览。只读，无参数。 */
+export async function protectionSummary(): Promise<ProtectionSummary> {
+  return await invoke<ProtectionSummary>("protection_summary");
+}

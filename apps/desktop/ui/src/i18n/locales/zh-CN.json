@@ -20,11 +20,32 @@
     "ipc_error": "IPC 错误"
   },
   "nav": {
+    "protection": "保护成效",
     "approvals": "审批队列",
     "activity": "活动流",
     "servers": "服务器注册",
     "sessions": "会话回放",
     "privacy": "隐私发现"
+  },
+  "protection": {
+    "page_title": "保护成效概览",
+    "subtitle": "Vigil 为你拦下了什么 —— 来自本地审计账本(与 `vigil-hub inspect protection` 同源)。",
+    "secrets_blocked": "输入侧拦截的裸密钥",
+    "secrets_blocked_hint": "原始密钥在到达 server / 模型前被拒。",
+    "leaks_detected": "检测到的工具结果泄漏",
+    "leaks_detected_hint": "工具输出里命中的 secret;开启结果脱敏时在到达 agent 前已遮蔽。",
+    "aliases_withheld": "withheld 的 secret 别名",
+    "aliases_withheld_hint": "未能解析的 secret:// 占位符,故该调用被拒。",
+    "events_audited": "已审计事件",
+    "events_audited_hint": "覆盖 {sessions} 个 session —— Vigil 在记录活动。",
+    "chain_ok_title": "审计链完整",
+    "chain_ok_body": "审计日志未被篡改 —— 防篡改哈希链校验通过。",
+    "chain_bad_title": "审计链断裂",
+    "chain_bad_body": "审计日志哈希链校验失败(可能被篡改)。为安全起见,最近明细已隐藏。",
+    "recent_title": "最近的保护事件",
+    "recent_empty": "暂无保护事件。把 MCP 工具经 Vigil 网关、正常用你的 agent —— Vigil 会在它们运行时记录并脱敏。",
+    "recent_suppressed": "因审计链校验失败,最近明细已隐藏(被篡改的日志可能含注入的 secret)。",
+    "loading_failed": "无法加载保护成效汇总。"
   },
   "sidebar": {
     "app_title": "Vigils 桌面",

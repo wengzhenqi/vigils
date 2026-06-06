@@ -46,7 +46,10 @@
 use std::sync::Arc;
 
 use tauri::{Emitter, Manager, State};
-use vigil_audit::{EventHit, Ledger, ServerOnboardingData, StoredServerProfile, ToolApprovalCard};
+use vigil_audit::{
+    EventHit, Ledger, ProtectionSummary, ServerOnboardingData, StoredServerProfile,
+    ToolApprovalCard,
+};
 use vigil_desktop::dispatch;
 use vigil_mcp::Hub;
 
@@ -211,6 +214,26 @@ async fn export_session_replay(
             "unexpected response shape for export_session_replay: {other:?}"
         )),
     }
+}
+
+/// D19:**保护成效概览**(`invoke('protection_summary')` → `Ledger::protection_summary`)。
+///
+/// 把 CLI `vigil-hub inspect protection`(D11)的"Vigil 拦下了什么"汇总面延伸到桌面 GUI(面向
+/// 非 CLI 受众的 audit 控制台)。**只读**:聚合**持久化**账本事件(裸 secret 拦截 / tool-result
+/// 泄漏检测 / secret:// alias 未解析 + 总量 / session 数 / 链完整性 + 最近 N 条脱敏摘要)。
+///
+/// **fail-closed 不变量沿用 `protection_summary`**(D11-B Codex):内部先 `verify_chain`,链被篡改
+/// 时 `recent` **强制为空**(篡改账本的 `redacted_text` 可能被注入原始 secret,链不可信绝不回显明细)。
+/// `ProtectionSummary` 本身 `serde::Serialize`,直接作 Tauri 返回(无需独立 DTO);`recent` 的 `EventHit`
+/// 只含已脱敏字段。直调 ledger(read-only,与 CLI inspect 同源直调,不经 dispatch 写门)。
+#[tauri::command]
+async fn protection_summary(state: State<'_, AppState>) -> Result<ProtectionSummary, String> {
+    // 最近事件展示条数(与 CLI inspect protection 默认一致量级);链坏时由 protection_summary 抑制为空。
+    const RECENT_LIMIT: u32 = 8;
+    state
+        .ledger
+        .protection_summary(RECENT_LIMIT)
+        .map_err(|e| e.to_string())
 }
 
 /// `invoke('list_privacy_findings', { req })` → UiCommand::ListPrivacyFindings →
@@ -688,6 +711,8 @@ fn main() {
             list_privacy_findings,
             // ISS-018(Safe Export —— 1 read)
             export_session_replay,
+            // D19(Protection Overview —— 1 read)
+            protection_summary,
         ])
         .setup(move |app| {
             let _main_window = app.get_webview_window("main");

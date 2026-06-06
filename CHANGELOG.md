@@ -8,6 +8,22 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.25] — 2026-06-07
+
+The desktop app now opens on a **Protection Overview** — see what Vigil has caught for you at a
+glance, the same information the CLI's `vigil-hub inspect protection` shows.
+
+### Added
+
+- **Desktop "Protection Overview" page (the new default landing page).** Until now, only the CLI
+  could show "what Vigil has caught" (`vigil-hub inspect protection`). The desktop app now opens
+  directly on a Protection Overview that shows, from the local audit ledger: secrets blocked at
+  input, tool-result leaks detected, secret:// aliases withheld, how many events were audited across
+  how many sessions, whether the tamper-evident audit chain still verifies, and a list of recent
+  (already-redacted) protection events. It's read-only and refreshes live as Vigil records activity.
+  If the audit chain ever fails verification, the recent-event details are hidden (only the counts
+  remain) — a tampered log could otherwise show injected text.
+
 ## [v0.1.24] — 2026-06-07
 
 Adds a deep health check that actually starts each MCP server to confirm it works — not just

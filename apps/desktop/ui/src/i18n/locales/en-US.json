@@ -20,11 +20,32 @@
     "ipc_error": "IPC Error"
   },
   "nav": {
+    "protection": "Protection",
     "approvals": "Approvals",
     "activity": "Activity",
     "servers": "Servers",
     "sessions": "Sessions",
     "privacy": "Privacy"
+  },
+  "protection": {
+    "page_title": "Protection Overview",
+    "subtitle": "What Vigil has caught for you, from the local audit ledger (same data as `vigil-hub inspect protection`).",
+    "secrets_blocked": "Secrets blocked at input",
+    "secrets_blocked_hint": "Raw secrets denied before reaching the server or model.",
+    "leaks_detected": "Tool-result leaks detected",
+    "leaks_detected_hint": "Secrets found in tool output; redacted before the agent when result redaction is on.",
+    "aliases_withheld": "Secret aliases withheld",
+    "aliases_withheld_hint": "secret:// placeholders that did not resolve, so the call was denied.",
+    "events_audited": "Events audited",
+    "events_audited_hint": "Across {sessions} session(s) — Vigil is recording activity.",
+    "chain_ok_title": "Audit chain intact",
+    "chain_ok_body": "The audit log has not been tampered with — the tamper-evident hash chain verifies.",
+    "chain_bad_title": "Audit chain broken",
+    "chain_bad_body": "The audit log failed hash-chain verification (possible tampering). Recent details are hidden for safety.",
+    "recent_title": "Recent protection events",
+    "recent_empty": "No protection events yet. Route your MCP tools through Vigil and use your agent normally — Vigil records and redacts as they run.",
+    "recent_suppressed": "Recent details are hidden because the audit chain failed verification (a tampered log could contain injected secrets).",
+    "loading_failed": "Could not load the protection summary."
   },
   "sidebar": {
     "app_title": "Vigils Desktop",

@@ -6,7 +6,8 @@
 //! - (b) `Arc<Hub>` 满足 `Send + Sync + 'static`(`app.manage()` 的隐式约束)
 //! - (c) Hub 内部与 caller 共享同一份 `Arc<Ledger>`(strong_count 至少 +1),
 //!   证明 `gui_build_hub` **没**重 open ledger(避免与 gui.rs single-open 冲突)
-//! - (d) `INVOKE_COMMANDS.len() == 21`(α1 不新增 #[tauri::command],SSOT 不变)
+//! - (d) `INVOKE_COMMANDS.len() == 22`(快照守门:α2 本身不新增 #[tauri::command],但其后
+//!   α3-α5 / ISS / D19 新增 handler 时本断言随 SSOT 同步,漂移即失败)
 //!
 //! 本文件只在 `--features gui` 下编译,与 lib 模块 `vigil_desktop::embed`
 //! 保持同步(模块本身也是 gui-feature-gated)。
@@ -62,7 +63,8 @@ fn gui_build_hub_shares_ledger_arc() {
     );
 }
 
-/// (d) INVOKE_COMMANDS=21 不变 —— α2 通过 Hub.resolve_approval 委托保持 SSOT 21 条不变。
+/// (d) INVOKE_COMMANDS 快照守门(现 = 22)—— α2 本身通过 Hub.resolve_approval 委托不新增 handler;
+/// 其后 α3-α5 / ISS / D19(protection_summary)新增时本断言随 SSOT 同步。
 ///
 /// 与 C1/C2 的关键区别:α2 的功能升级在既有 handler 函数体内部(改走
 /// `hub.resolve_approval`)而非新增 #[tauri::command]。SSOT 三件套
@@ -72,11 +74,10 @@ fn gui_build_hub_shares_ledger_arc() {
 fn invoke_commands_count_unchanged_in_alpha2() {
     assert_eq!(
         vigil_desktop::commands::INVOKE_COMMANDS.len(),
-        21,
-        "α2 通过 Hub.resolve_approval thin-wrapper 委托实现功能升级,\
-         SSOT 三件套零修改:commands.rs / gui.rs generate_handler! / \
-         capabilities/default.json 仍是 21 条;handler 数量不增,\
-         功能升级在 handler 函数体内部(改走 hub.resolve_approval)。\
-         见 ADR 0014 Revised α2"
+        22,
+        "SSOT handler 数 = 22(α1=1 + α2=3 + α3=3 + α4=10 + α5=2 + ISS-017=1 + ISS-018=1 + D19=1)。\
+         α2 本身不新增 handler(功能升级在 hub.resolve_approval 函数体内,见 ADR 0014 Revised α2);\
+         其后 α3-α5 / ISS / D19(protection_summary)新增 handler 时,本快照 + commands.rs SSOT 三件套\
+         必须同步。新增 handler 漂移即本断言失败,强制三处同步。"
     );
 }

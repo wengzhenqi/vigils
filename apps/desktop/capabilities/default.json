@@ -29,6 +29,7 @@
     "allow-replay-session",
     "allow-verify-chain",
     "allow-list-privacy-findings",
-    "allow-export-session-replay"
+    "allow-export-session-replay",
+    "allow-protection-summary"
   ]
 }

@@ -122,6 +122,11 @@ onUnmounted(() => {
 // v0.14 Theme D:菜单 label 走 i18n,locale 变化时 computed 重渲染
 const menuOptions = computed(() => [
   {
+    // D19:Protection Overview 首项(默认落地页,= CLI inspect protection)
+    label: () => h(RouterLink, { to: "/protection" }, () => t("nav.protection")),
+    key: "protection",
+  },
+  {
     label: () => h(RouterLink, { to: "/approvals" }, () => t("nav.approvals")),
     key: "approvals",
   },
@@ -144,7 +149,7 @@ const menuOptions = computed(() => [
 ]);
 
 const selectedKey = computed(() => {
-  const name = (route.name as string | undefined) ?? "approvals";
+  const name = (route.name as string | undefined) ?? "protection";
   return name;
 });
 </script>
