@@ -26,6 +26,8 @@
 #![allow(clippy::large_enum_variant)]
 
 mod engine;
+// D26:静态 effect 目录(按工具身份预置 baseline 效应),作为 extractor #0 单调叠加。
+pub mod catalog;
 pub mod extract;
 // ISS-010 R2:T0 preflight helper + PiiScanner trait。主体 pub(crate),仅把 trait
 // 和 test-only scanner 通过 lib 级 re-export 暴露(允许 integration test 注入 mock)。

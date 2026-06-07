@@ -8,6 +8,23 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.27] — 2026-06-07
+
+可验证的供应链,以及终于能对真实 MCP server 做风险分类的防火墙。
+
+### 新增
+
+- **每个发布产物都带 build-provenance 证明。** CLI 压缩包、桌面安装包、扩展 zip 现在都附带密码学
+  SLSA build-provenance 证明(经 GitHub OIDC + Sigstore,无需自管密钥)。用
+  `gh attestation verify <文件> --repo duncatzat/vigils` 校验任一下载:确认产物**由官方 CI 从本仓库构建**,
+  关闭"release 被替换/篡改"的缺口(单凭校验和无法关闭)。见[安装](./README.zh-CN.md#安装)。
+- **Effect 目录 —— tool-call 防火墙现在对真实 MCP server 做风险分类。** 此前防火墙只从调用**参数**推断
+  效应,故对那些风险由工具**身份**隐含的第三方 server(`github` 的 `create_issue`、`fetch`)只看到
+  "无效应",重型策略机器空转。现在内置目录按身份为常见 server(filesystem、github、fetch、git、
+  brave-search、slack、postgres)预置 baseline 效应 —— 每个工具实际做什么(读写文件、网络、用 secret、
+  对外发消息)现在都在审计账本可见,`--enforce` 可据此 gate。它**结构性 fail-safe**:目录只会**抬高**
+  可见性/严重度(绝不掩盖真实效应),且**不改**默认 monitor 姿态 —— 不新增任何审批弹窗。
+
 ## [v0.1.26] — 2026-06-07
 
 Linux CLI 现在能在近十年几乎任何 glibc Linux 上运行 —— 不再只限较新发行版。

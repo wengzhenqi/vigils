@@ -8,6 +8,28 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.27] — 2026-06-07
+
+Verifiable supply chain, and a firewall that finally classifies risk on real MCP servers.
+
+### Added
+
+- **Build-provenance attestation for every release artifact.** The CLI archives, desktop
+  installers, and the extension zip now carry a cryptographic SLSA build-provenance attestation
+  (via GitHub OIDC + Sigstore — no key to manage). Verify any download with
+  `gh attestation verify <file> --repo duncatzat/vigils`: it confirms the artifact was built by the
+  official CI from this repository, closing the "swapped/tampered release" gap that a checksum alone
+  can't. See [Installation](./README.md#installation).
+- **Effect catalog — the tool-call firewall now classifies risk on real MCP servers.** Until now the
+  firewall inferred effects only from call *arguments*, so for third-party servers whose risk is
+  implied by tool *identity* (a `github` `create_issue`, a `fetch`) it saw "no effects" and the heavy
+  policy machinery idled. A built-in catalog now seeds baseline effects by identity for common servers
+  (filesystem, github, fetch, git, brave-search, slack, postgres) — so what each tool actually does
+  (file read/write, network, secret use, outbound message) is now visible in the audit ledger, and
+  `--enforce` can gate on it. It's **fail-safe by construction**: the catalog only ever *raises*
+  visibility/severity (never suppresses a real effect), and it does **not** change the default
+  monitor posture — no new approval prompts.
+
 ## [v0.1.26] — 2026-06-07
 
 The Linux CLI now runs on virtually any glibc Linux from the last decade — not just recent releases.

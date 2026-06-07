@@ -20,7 +20,7 @@ use vigil_firewall::{
     Firewall, FirewallConfig, FirewallOutcome, OAuthScopeContext,
 };
 use vigil_policy::{defaults::default_ruleset, PolicyEngine};
-use vigil_types::{ApprovalScope, ApprovalStatus, DecisionKind, ToolInvocation};
+use vigil_types::{ApprovalScope, ApprovalStatus, DecisionKind, EffectKind, ToolInvocation};
 
 fn setup(project_root: &str, allowed_hosts: Vec<&str>) -> (Arc<Ledger>, Firewall, String) {
     let l = Arc::new(Ledger::open_in_memory().unwrap());
@@ -758,4 +758,71 @@ fn wait_for_resolution_times_out_on_pending() {
         .wait_for_resolution(&req.approval_id, Duration::from_millis(30))
         .unwrap();
     assert!(got.is_none(), "pending 应超时返回 None");
+}
+
+// ============================================================
+// D26:effect 目录 —— 防火墙对真实 server 工具按身份分类(集成验证)
+// ============================================================
+
+/// D26:catalog extractor 让防火墙对已知 server 的工具按**身份**预置效应,且这些效应经真实
+/// `evaluate` 流出现在决策的 `EffectVector` 里(随决策入账本 → `inspect protection`/审计可见)。
+///
+/// 取 github `create_issue`(args 无 url/path/secret-ref → 7 个 arg-extractor 本会产出**空**
+/// EffectVector);目录按身份预置 NetOutbound + SecretUse + CommSend。这正是此前"重型防火墙对真实
+/// 第三方 server 空转"的缺口被补上的证据。不断言具体 decision_kind —— monitor 降级是 hub 层职责,
+/// 防火墙层按 ruleset 决策(可能 Approve/Deny),本测试只验**效应可见性**(D26 的核心收益)。
+#[test]
+fn catalog_classifies_known_tool_by_identity() {
+    let (_l, fw, sid) = setup("/proj", vec![]);
+    let call = ToolInvocation {
+        invocation_id: uuid::Uuid::new_v4().to_string(),
+        session_id: sid.clone(),
+        server_id: "github".into(),
+        tool_name: "create_issue".into(),
+        args: json!({ "title": "hi", "body": "x" }),
+        descriptor_hash: "hash".into(),
+        requested_at: 0,
+    };
+    let out = fw
+        .evaluate(
+            &call,
+            &StaticDescriptorOracle(DescriptorStatus::ApprovedStable),
+            OAuthScopeContext::NonOauth,
+        )
+        .unwrap();
+    let effects = out.effects();
+    assert!(
+        effects.effects.contains(&EffectKind::NetOutbound),
+        "D26:目录应为 github/create_issue 预置 NetOutbound(此前为空)"
+    );
+    assert!(
+        effects.effects.contains(&EffectKind::SecretUse),
+        "D26:github 用 token → SecretUse"
+    );
+    assert!(
+        effects.effects.contains(&EffectKind::CommSend),
+        "D26:create_issue 对外发布 → CommSend"
+    );
+}
+
+/// D26 单调不变量(集成层):同一调用,目录只会**新增**效应,绝不掩盖 arg-extractor 本会发现的。
+/// 取一个目录**不认识**的工具但 args 含路径 —— arg-extractor 仍照常产出 FsRead/FsWrite,目录不干扰。
+#[test]
+fn catalog_does_not_suppress_arg_extractor_effects() {
+    let (_l, fw, sid) = setup("/proj", vec![]);
+    // 目录无此 (server, tool) 项 → 目录贡献 0;但 args.path 让 PathExtractor 照常分类。
+    let call = mk_call(&sid, "some_unknown_write_tool", json!({ "path": "/proj/src/x.rs" }));
+    let out = fw
+        .evaluate(
+            &call,
+            &StaticDescriptorOracle(DescriptorStatus::ApprovedStable),
+            OAuthScopeContext::NonOauth,
+        )
+        .unwrap();
+    let effects = out.effects();
+    // tool_name 含 "write" → PathExtractor 归为写。目录未参与,但也未掩盖。
+    assert!(
+        effects.effects.contains(&EffectKind::FsWrite),
+        "D26:目录不认识的工具,arg-extractor 仍照常分类(目录单调,不掩盖)"
+    );
 }

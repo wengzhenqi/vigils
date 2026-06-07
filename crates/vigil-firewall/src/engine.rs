@@ -173,6 +173,16 @@ impl FirewallOutcome {
             FirewallOutcome::Approve { .. } => DecisionKind::Approve,
         }
     }
+
+    /// 快捷:返回本次决策推断出的 [`EffectVector`](三个变种都携带)。
+    /// 供调用方(GUI / 审计 / 测试)统一读取,无需对 `#[non_exhaustive]` 枚举手动 match。
+    pub fn effects(&self) -> &EffectVector {
+        match self {
+            FirewallOutcome::Allowed { effects, .. }
+            | FirewallOutcome::Denied { effects, .. }
+            | FirewallOutcome::Approve { effects, .. } => effects,
+        }
+    }
 }
 
 /// Firewall 主组件。持有 extractors / scorer / policy 引擎 / 审计账本 / PII scanner。
@@ -228,6 +238,10 @@ impl Firewall {
         let roots: Vec<PathBuf> = config.project_roots.iter().map(PathBuf::from).collect();
         let scorer = RiskScorer::new(config.allowed_hosts.clone(), config.project_roots.clone());
         let extractors: Vec<Box<dyn EffectExtractor>> = vec![
+            // D26:目录 extractor 先跑,为已知 server 的工具按身份预置 baseline 效应
+            //(filesystem/github/fetch/git/… → FsRead/FsWrite/NetOutbound/SecretUse/…),
+            // 让随后的 arg-extractor 在其上叠加具体路径/host/secret-ref。单调:只增不减。
+            Box::new(crate::catalog::CatalogExtractor::new()),
             Box::new(PathExtractor::new(roots)),
             Box::new(UrlExtractor),
             Box::new(SqlExtractor),
