@@ -96,10 +96,14 @@ testable and composed by the **Hub** (the MCP gateway).
 
 ## Installation
 
-**Quickest (macOS / Linux)** — install the CLI in one line, then jump to [Quick Start](#quick-start):
+**Quickest** — install the CLI in one line, then jump to [Quick Start](#quick-start):
 
 ```bash
-curl -fsSL https://vigils.ai/install.sh | sh
+curl -fsSL https://vigils.ai/install.sh | sh         # macOS / Linux
+```
+
+```powershell
+irm https://vigils.ai/install.ps1 | iex              # Windows (PowerShell)
 ```
 
 Or grab a pre-built installer / binary for **Windows, macOS, or Linux** from any
@@ -118,16 +122,22 @@ The **Chrome extension** lives in `extensions/chrome-mv3/` — load it unpacked 
 
 ## Quick Start
 
-### Install (one line — macOS / Linux)
+### Install (one line)
 
 ```bash
-curl -fsSL https://vigils.ai/install.sh | sh
+curl -fsSL https://vigils.ai/install.sh | sh         # macOS / Linux
 ```
 
-Installs the `vigil-hub` CLI to `~/.local/bin`. It only puts the binaries on disk — **no
-shell-config edits, no `setup`, no agent-config changes** — and prints what to do next, so you
-stay in control. Want to read it before piping to a shell? It's [`install.sh`](./install.sh).
-Windows or prefer a manual download? See [Installation](#installation).
+```powershell
+irm https://vigils.ai/install.ps1 | iex              # Windows (PowerShell)
+```
+
+Installs the `vigil-hub` CLI (to `~/.local/bin` on macOS/Linux, `%LOCALAPPDATA%\Vigils\bin` on
+Windows). It only puts the binaries on disk — **no shell/PATH edits, no `setup`, no agent-config
+changes** — and prints what to do next, so you stay in control. The download is verified against the
+release's published SHA-256 before unpacking (fail-closed). Want to read them first? They're
+[`install.sh`](./install.sh) / [`install.ps1`](./install.ps1). Prefer a manual download? See
+[Installation](#installation).
 
 ### See it in 60 seconds (zero setup)
 
