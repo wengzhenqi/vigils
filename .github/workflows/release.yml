@@ -180,11 +180,30 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path "${{ matrix.bindir }}/vigil-hub.exe", "${{ matrix.bindir }}/vigil-native-host.exe" -DestinationPath "dist/vigils-cli-${{ matrix.plat }}.zip"
 
+      # D22:为每个 CLI 资产发布 `<asset>.sha256`,供一行安装器 install.sh 校验下载完整性
+      # (随 release 发布的 SHA-256,检测传输损坏/篡改;非独立离线签名)。格式 `<hash>  <file>`,
+      # 与 install.sh 的 `cut -d' ' -f1` 解析对齐。shasum -a 256 在 Linux+macOS 都有。
+      - name: Checksum (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -e
+          cd dist
+          shasum -a 256 "vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}" > "vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}.sha256"
+      - name: Checksum (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $f = "vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}"
+          $h = (Get-FileHash -Algorithm SHA256 "dist/$f").Hash.ToLower()
+          Set-Content -Path "dist/$f.sha256" -Value "$h  $f" -Encoding ascii
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
-          files: dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
+          files: |
+            dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
+            dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}.sha256
 
   # ── 3. 桌面安装包（3 平台,Tauri bundle）─────────────────────────────
   desktop:

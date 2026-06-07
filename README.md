@@ -96,7 +96,13 @@ testable and composed by the **Hub** (the MCP gateway).
 
 ## Installation
 
-Pre-built installers and binaries for **Windows, macOS, and Linux** are attached to each
+**Quickest (macOS / Linux)** — install the CLI in one line, then jump to [Quick Start](#quick-start):
+
+```bash
+curl -fsSL https://vigils.ai/install.sh | sh
+```
+
+Or grab a pre-built installer / binary for **Windows, macOS, or Linux** from any
 [GitHub Release](https://github.com/duncatzat/vigils/releases):
 
 | Platform | Desktop app | CLI |
@@ -111,6 +117,17 @@ The **Chrome extension** lives in `extensions/chrome-mv3/` — load it unpacked 
 `chrome://extensions` → *Developer mode* → *Load unpacked* (it talks to `vigil-native-host`).
 
 ## Quick Start
+
+### Install (one line — macOS / Linux)
+
+```bash
+curl -fsSL https://vigils.ai/install.sh | sh
+```
+
+Installs the `vigil-hub` CLI to `~/.local/bin`. It only puts the binaries on disk — **no
+shell-config edits, no `setup`, no agent-config changes** — and prints what to do next, so you
+stay in control. Want to read it before piping to a shell? It's [`install.sh`](./install.sh).
+Windows or prefer a manual download? See [Installation](#installation).
 
 ### See it in 60 seconds (zero setup)
 
