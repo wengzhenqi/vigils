@@ -1,6 +1,7 @@
 # Summary
 
 [Introduction](./intro.md)
+[Watch the demo (20s)](./demo.md)
 
 # Getting Started
 

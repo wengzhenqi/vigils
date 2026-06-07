@@ -9,7 +9,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#installation)
 
-[Website](https://vigils.ai) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Security Model](#security-model) · [Documentation](#documentation)
+[Website](https://vigils.ai) · [▶ Watch the 20s demo](https://duncatzat.github.io/vigils/demo.html) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Security Model](#security-model) · [Documentation](#documentation)
 
 **English** | [简体中文](./README.zh-CN.md)
 
