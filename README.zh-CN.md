@@ -167,6 +167,30 @@ vigil-hub demo            # 默认拒绝 → 占位符往返 → 真值只到本
 vigil-hub demo --tamper   # 另演示:篡改账本一行,看 verify-chain 检测到(可证伪)
 ```
 
+你会看到(真实输出,节选):
+
+```text
+  A demo secret — freshly generated locally for this run (never leaves this process):
+    github_pat = ghp_c7da264c45f58cd89aaa12cde5b8c69883e6
+
+  [1] default-deny: agent puts the RAW secret in the tool call
+    tool=github.create_issue  ->  Vigil firewall: DENY  (rule=github_token)
+
+  [2] the Vigil way: the agent passes a PLACEHOLDER instead
+    What the REMOTE MODEL saw:    {"token":"secret://github_pat"}              plaintext secret? NO
+    What the LOCAL TOOL received: {"token":"ghp_c7da264c45f58cd89aaa12c..."}   contains real value? YES
+    The tool's result LEAKED a credential; Vigil re-redacted it:
+      {"debug_trace":"authenticated with [REDACTED github_token] ...","ok":true}    secret back to model? NO
+
+  [3] tamper-evident audit ledger (no plaintext secrets stored)
+      0002 sha256:947ce1fe0d30  raw_secret_attempt_detected
+      0008 sha256:17e875d2e47e  secret.leak_detected
+    hash chain valid: YES        plaintext secret in audit: NO
+```
+
+> **关键洞察:** agent 用真实密钥完成了有用的工作 —— 而模型、日志、审计**从未**拿到真值。这是一个预置场景 +
+> 本地现生成的 fixture;防火墙、脱敏、审计都是 Vigils 的**真实代码**,只有模型/工具 provider 是模拟的。
+
 ### 作为 MCP 网关(CLI)
 
 把 Vigils 放在你的 MCP server 前面,让每次工具调用都经过防火墙、审批与审计:

@@ -150,6 +150,27 @@ vigil-hub demo            # default-deny → placeholder round-trip → real val
 vigil-hub demo --tamper   # also: alter the audit ledger and watch verify-chain DETECT it (falsifiable)
 ```
 
+What you'll see (real output, trimmed):
+
+```text
+  A demo secret — freshly generated locally for this run (never leaves this process):
+    github_pat = ghp_c7da264c45f58cd89aaa12cde5b8c69883e6
+
+  [1] default-deny: agent puts the RAW secret in the tool call
+    tool=github.create_issue  ->  Vigil firewall: DENY  (rule=github_token)
+
+  [2] the Vigil way: the agent passes a PLACEHOLDER instead
+    What the REMOTE MODEL saw:    {"token":"secret://github_pat"}              plaintext secret? NO
+    What the LOCAL TOOL received: {"token":"ghp_c7da264c45f58cd89aaa12c..."}   contains real value? YES
+    The tool's result LEAKED a credential; Vigil re-redacted it:
+      {"debug_trace":"authenticated with [REDACTED github_token] ...","ok":true}    secret back to model? NO
+
+  [3] tamper-evident audit ledger (no plaintext secrets stored)
+      0002 sha256:947ce1fe0d30  raw_secret_attempt_detected
+      0008 sha256:17e875d2e47e  secret.leak_detected
+    hash chain valid: YES        plaintext secret in audit: NO
+```
+
 > **The aha:** the agent did useful work with a real secret — while the model, logs, and audit never
 > received the real value. It's a planted scenario with a freshly-generated local fixture; the
 > firewall, redaction, and audit are Vigils' real code, only the model/tool provider is simulated.
