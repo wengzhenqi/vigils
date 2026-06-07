@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vigil_hub_cli::demo::{self, DemoArgs};
 use vigil_hub_cli::hook::{self, HookArgs};
-use vigil_hub_cli::inspect::{self, InspectArgs};
 use vigil_hub_cli::serve::{self, ServeArgs};
 use vigil_hub_cli::setup::{self, SetupArgs};
 use vigil_hub_cli::setup_mcp::{self, McpServerClass};
@@ -63,10 +62,28 @@ enum Command {
     /// 用法:`vigil-hub wrap -- npx -y @modelcontextprotocol/server-filesystem /data`
     /// (在 agent 的 MCP 配置里把 `command` 改为 `vigil-hub`、args 前缀 `["wrap","--", ...原命令]`)。
     Wrap(CliWrapArgs),
-    /// 命令行查询本地审计账本:activity / search / approvals / session / servers / verify-chain。
+    /// 锚定审计链头(ADR 0020):把当前链头快照写入与账本分离的 append-only sidecar
+    /// (`<ledger>.checkpoints`)。周期运行(或 cron)即可检出**整链重写**——哈希链单独检不出的篡改。
     ///
-    /// 用法:`vigil-hub inspect --db-path ./vigil.db activity --limit 20`。
-    Inspect(InspectArgs),
+    /// 安全建议:把 `.checkpoints` 设为 OS append-only(`chattr +a`)或异地同步,锚点才能完全闭合
+    /// "持完整本地写权限者整链重写"。
+    Checkpoint(CliCheckpointArgs),
+    /// 校验审计链:先链内一致性(防篡断裂),再比对 checkpoint 锚点(防整链重写)。三态如实输出。
+    Verify(CliVerifyArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct CliCheckpointArgs {
+    /// 审计账本路径(默认 `<本机数据目录>/Vigil/ledger.sqlite3`,与 setup/hook/wrap 同一个)。
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug)]
+struct CliVerifyArgs {
+    /// 审计账本路径(默认同上)。
+    #[arg(long)]
+    ledger: Option<PathBuf>,
 }
 
 #[derive(clap::Args, Debug)]
@@ -388,7 +405,8 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
-        Some(Command::Inspect(args)) => inspect::run(args),
+        Some(Command::Checkpoint(args)) => run_checkpoint(args.ledger),
+        Some(Command::Verify(args)) => run_verify(args.ledger),
     }
 }
 
@@ -553,6 +571,105 @@ fn run_json_agent_leg(
     }
 }
 
+/// `vigil-hub checkpoint`(ADR 0020):锚定当前审计链头到 append-only sidecar(`<ledger>.checkpoints`)。
+fn run_checkpoint(ledger: Option<PathBuf>) -> std::process::ExitCode {
+    let Some(path) = ledger.or_else(setup::default_ledger_path) else {
+        eprintln!("vigil-hub checkpoint: 无法定位审计账本(给 --ledger 或设 VIGIL_LEDGER_PATH)");
+        return std::process::ExitCode::FAILURE;
+    };
+    let ledger = match vigil_audit::Ledger::open(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("vigil-hub checkpoint: 打开账本失败: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let log = vigil_audit::CheckpointLog::sidecar_for(&path);
+    match log.emit(&ledger) {
+        Ok(Some(cp)) => {
+            // event_hash 必为 64-hex,取前 12 仅作展示。
+            let head = cp.event_hash.get(..12).unwrap_or(&cp.event_hash);
+            println!(
+                "✓ anchored checkpoint at event #{} (head {head}…) → {}",
+                cp.event_id,
+                log.path().display()
+            );
+            eprintln!(
+                "  tip: keep this file append-only (chattr +a) or synced offsite, so a full-chain \
+                 rewrite can't also forge the anchor."
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            println!(
+                "nothing to anchor (ledger empty, or no new events since the last checkpoint)."
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("vigil-hub checkpoint failed: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// `vigil-hub verify`(ADR 0020):链内一致性(防篡断裂)+ checkpoint 锚点(防整链重写),三态如实输出。
+/// 任何检出的篡改/损坏 → 非零退出(可脚本化);Verified / Unanchored → 0。
+fn run_verify(ledger: Option<PathBuf>) -> std::process::ExitCode {
+    let Some(path) = ledger.or_else(setup::default_ledger_path) else {
+        eprintln!("vigil-hub verify: 无法定位审计账本(给 --ledger 或设 VIGIL_LEDGER_PATH)");
+        return std::process::ExitCode::FAILURE;
+    };
+    let ledger = match vigil_audit::Ledger::open(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("vigil-hub verify: 打开账本失败: {e}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
+    let log = vigil_audit::CheckpointLog::sidecar_for(&path);
+    match log.verify_anchored(&ledger) {
+        Ok(vigil_audit::Anchored::Verified {
+            checkpoints,
+            through_event_id,
+        }) => {
+            println!(
+                "✓ chain internally valid AND anchored: {checkpoints} checkpoint(s), through event #{through_event_id}."
+            );
+            // 诚实框定(ADR §3):不冒充 tamper-proof。
+            println!(
+                "  (anchor detects a DB-only full-chain rewrite while the .checkpoints file is intact \
+                 — not a tamper-proof guarantee.)"
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Ok(vigil_audit::Anchored::Unanchored) => {
+            println!("✓ chain internally valid; ⚠ no checkpoints found.");
+            println!(
+                "  run `vigil-hub checkpoint` to anchor against a full-chain rewrite (audit threat #7)."
+            );
+            std::process::ExitCode::SUCCESS
+        }
+        Err(e) => {
+            match &e {
+                vigil_audit::AuditError::ChainBroken { event_id } => eprintln!(
+                    "✗ chain BROKEN at event #{event_id} — internal tampering detected."
+                ),
+                vigil_audit::AuditError::CheckpointMismatch { event_id } => eprintln!(
+                    "✗ checkpoint MISMATCH at event #{event_id} — chain prefix may have been rewritten."
+                ),
+                vigil_audit::AuditError::CheckpointStoreCorrupt { reason } => {
+                    eprintln!("✗ checkpoint store corrupt: {reason}")
+                }
+                other => eprintln!("✗ verify failed: {other}"),
+            }
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// `setup --all`:一条命令同时接入 hook + MCP 网关 wrap(兑现 download→直接保护)。
+/// `--uninstall` 撤销两者;`--dry-run` 预览两者;MCP 侧默认 monitor(`--enforce` 升级硬拦)。
 fn run_setup_all(args: &CliSetupArgs) -> Result<std::process::ExitCode, setup::SetupError> {
     let home = dirs::home_dir().ok_or(setup::SetupError::MissingHomeDir)?;
     let exe = std::env::current_exe().map_err(|_| setup::SetupError::MissingCurrentExe)?;
@@ -1165,7 +1282,6 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
         println!("  tamper-evident local audit ledger.");
         println!();
         println!("  Verify:  vigil-hub setup --status");
-        println!("  See it:  vigil-hub inspect activity     # what Vigil has blocked, anytime");
         println!("  Undo:    vigil-hub setup --uninstall");
         println!("  Restart Claude Code (or start a new session) for the hook to take effect.");
     } else {

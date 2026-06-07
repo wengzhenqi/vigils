@@ -8,6 +8,26 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.31] — 2026-06-08
+
+Audit checkpoint anchoring — detect a full-chain rewrite of the tamper-evident ledger.
+
+### Added
+
+- **`vigil-hub checkpoint` and `vigil-hub verify` — external anchoring against full-chain rewrite.**
+  The audit ledger's SHA-256 hash chain makes *partial* tampering evident, but an attacker with full
+  write access to the database could rewrite the *entire* chain consistently and still pass internal
+  verification (audit threat #7). `vigil-hub checkpoint` now records the current chain head into an
+  append-only sidecar (`<ledger>.checkpoints`) kept **separate** from the database; `vigil-hub verify`
+  checks chain-internal consistency **and** that every anchored head still matches — so a DB-only
+  full-chain rewrite is detected (while the checkpoint file is intact), exiting non-zero on any tamper.
+  Honest scope: this is **not** a tamper-proof guarantee against an attacker with full filesystem write
+  access — for that, keep the `.checkpoints` file append-only (`chattr +a`) or synced offsite;
+  verification reports `Unanchored` (never "verified") when no checkpoints exist. The embeddable
+  `vigil-audit` gains the `CheckpointLog` API. The existing hash-chain digest and `verify_chain` are
+  unchanged (purely additive). See
+  [ADR 0020](https://github.com/duncatzat/vigils/blob/main/docs/adr/0020-audit-checkpoint-anchor.md).
+
 ## [v0.1.30] — 2026-06-07
 
 `--doctor` now health-checks every agent, not just Claude.

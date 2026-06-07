@@ -8,9 +8,21 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
-## [v0.1.30] — 2026-06-07
+## [v0.1.31] — 2026-06-08
 
-`--doctor` 现在体检每个 agent,不再只是 Claude。
+审计 checkpoint 锚定 —— 检出防篡改账本的整链重写。
+
+### 新增
+
+- **`vigil-hub checkpoint` 与 `vigil-hub verify` —— 对抗整链重写的外部锚定。** 审计账本的 SHA-256
+  哈希链能让*部分*篡改可见,但持完整数据库写权限的攻击者可一致重写*整条*链并仍通过内部校验
+  (审计 threat #7)。`vigil-hub checkpoint` 现把当前链头记入一份与数据库**分离**的 append-only
+  sidecar(`<ledger>.checkpoints`);`vigil-hub verify` 同时校验链内一致性**与**每个锚点是否仍匹配
+  —— 只要 checkpoint 文件完好,仅改数据库的整链重写即被检出,发现任何篡改即非零退出。诚实边界:
+  这**不是**对持完整文件系统写权限者的 tamper-proof 保证 —— 为此请把 `.checkpoints` 设为
+  append-only(`chattr +a`)或异地同步;无锚点时校验报告 `Unanchored`(绝不报 "verified")。可嵌入的
+  `vigil-audit` 新增 `CheckpointLog` API。既有哈希链摘要与 `verify_chain` 不变(纯增量)。详见
+  [ADR 0020](https://github.com/duncatzat/vigils/blob/main/docs/adr/0020-audit-checkpoint-anchor.md)。
 
 ### 新增
 

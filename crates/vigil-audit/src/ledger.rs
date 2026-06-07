@@ -665,6 +665,58 @@ impl Ledger {
         }))
     }
 
+    /// 取当前链头(`MAX(event_id)` 那条)完整细节,**单次加锁**内完成 MAX + fetch。
+    ///
+    /// ADR 0020 checkpoint emit 用它**原子**读链头快照:把 MAX 与取行放进同一临界区,
+    /// 避免两次加锁之间的歧义(虽然 append-only 永不改写既有行使两次加锁也正确,但单临界区
+    /// 与 ADR MF#6 的承诺一致、语义更清晰)。空账本 → `Ok(None)`。
+    pub fn head_detail(&self) -> Result<Option<EventDetailRow>> {
+        let guard = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
+        let max: Option<i64> =
+            guard.query_row("SELECT MAX(event_id) FROM events", [], |r| r.get(0))?;
+        let Some(head_id) = max else {
+            return Ok(None);
+        };
+        let (
+            event_id,
+            session_id,
+            event_type,
+            payload_json,
+            redacted_text,
+            prev_hash,
+            event_hash,
+            created_at,
+        ) = guard.query_row(
+            "SELECT event_id, session_id, event_type, payload_json, redacted_text,
+                    prev_hash, event_hash, created_at
+             FROM events WHERE event_id = ?1",
+            rusqlite::params![head_id],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, String>(6)?,
+                    r.get::<_, i64>(7)?,
+                ))
+            },
+        )?;
+        let payload: Value = serde_json::from_str(&payload_json)?;
+        Ok(Some(EventDetailRow {
+            event_id,
+            session_id,
+            event_type,
+            payload,
+            redacted_text,
+            prev_hash,
+            event_hash,
+            created_at,
+        }))
+    }
+
     /// Activity Feed 后端查询:按 session + event_type 过滤,返回最近 N 条。
     ///
     /// ADR 0008 §D7:后端保留全量查询,默认过滤集由前端决定。

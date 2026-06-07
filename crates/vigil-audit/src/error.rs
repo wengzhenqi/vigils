@@ -50,6 +50,25 @@ pub enum AuditError {
         /// 冲突的 server id
         server_id: String,
     },
+
+    /// ADR 0020:checkpoint 锚点与当前链头不符 —— **整链重写检出信号**。
+    /// 区别于 `ChainBroken`(链内 prev_hash/摘要断裂):这里链内自洽(verify_chain 已过)但
+    /// 某个被外部锚定的历史链头的绑定字段已变,说明该前缀被一致重写过。
+    #[error(
+        "checkpoint anchor mismatch at event_id={event_id} (chain prefix may have been rewritten)"
+    )]
+    CheckpointMismatch {
+        /// 与锚点不符的事件 id。
+        event_id: i64,
+    },
+
+    /// ADR 0020:checkpoint sidecar 自身损坏 / 非单调 / 非法行 —— fail-closed 拒绝
+    /// (绝不静默跳过坏行,否则攻击者可用坏行掩盖删除的锚点)。
+    #[error("checkpoint store corrupt: {reason}")]
+    CheckpointStoreCorrupt {
+        /// 人类可读的损坏原因(不含不可信原文)。
+        reason: String,
+    },
 }
 
 /// 本 crate 专用 Result。

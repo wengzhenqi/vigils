@@ -10,6 +10,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 mod approvals;
+pub mod checkpoint;
 pub mod error;
 pub mod hash;
 mod ledger;
@@ -18,6 +19,8 @@ mod registry;
 mod span;
 
 pub use approvals::ApprovalTargetContext;
+// ADR 0020:审计 checkpoint 锚点(对抗整链重写 / threat #7)。
+pub use checkpoint::{Anchored, Checkpoint, CheckpointLog};
 // v0.7-α6 A1(E6a):engine.degraded 事件 typed payload(audit/firewall 解耦,
 // 用 stable string code 而非 enum,防 audit crate 循环依赖 firewall 类型)
 pub use approvals::EngineDegradedPayload;
