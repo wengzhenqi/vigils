@@ -14,6 +14,11 @@ on:
 
 permissions:
   contents: write
+  # D25:build provenance attestation(actions/attest-build-provenance)需 OIDC token 换 Sigstore
+  # 签名 + 写 attestation。让发布产物可 `gh attestation verify <file> --repo duncatzat/vigils`
+  # 校验"由官方 CI 从官方源构建"(SLSA provenance,无需自管密钥),关闭"release 被替换"风险。
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -205,6 +210,13 @@ jobs:
             dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
             dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}.sha256
 
+      # D25:为这条 leg 的 CLI 压缩包生成 SLSA build provenance(每平台一条 attestation)。
+      # 用户可 `gh attestation verify vigils-cli-<plat>.<ext> --repo duncatzat/vigils` 校验来源。
+      - name: Attest build provenance (CLI)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
+
   # ── 3. 桌面安装包（3 平台,Tauri bundle）─────────────────────────────
   desktop:
     needs: create-release
@@ -284,6 +296,22 @@ jobs:
             target/release/bundle/**/*.AppImage.tar.gz
             target/release/bundle/**/*.AppImage.tar.gz.sig
 
+      # D25:为本平台的桌面安装包生成 build provenance(.exe/.msi/.dmg/.deb/.rpm/.AppImage;
+      # 不含 .sig 更新器签名——那是签名非构建产物)。continue-on-error:provenance 是增值,
+      # 任一平台 glob 不匹配 / attest 异常都不阻塞已上传的安装包。
+      - name: Attest build provenance (desktop installers)
+        if: always()
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            target/release/bundle/**/*-setup.exe
+            target/release/bundle/**/*.msi
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.deb
+            target/release/bundle/**/*.rpm
+            target/release/bundle/**/*.AppImage
+
       # OTA: generate this platform's updater manifest (latest-<plat>.json) pointing at the
       # signed artifact's GitHub release URL, then upload it as a release asset. The
       # vigils.ai mirror's ota-sync pulls these → /desktop-updates/<plat>/latest.json.
@@ -316,3 +344,9 @@ jobs:
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
           files: dist/vigils-chrome-extension.zip
+
+      # D25:为浏览器扩展 zip 生成 build provenance。
+      - name: Attest build provenance (extension)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/vigils-chrome-extension.zip

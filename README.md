@@ -117,6 +117,18 @@ Or grab a pre-built installer / binary for **Windows, macOS, or Linux** from any
 
 > Early releases are unsigned; your OS may show a Gatekeeper / SmartScreen prompt on first run.
 
+**Verify what you downloaded** (optional). Every release asset carries a SHA-256 checksum
+(`<file>.sha256`, also checked automatically by the one-line installer) and a cryptographic
+**build-provenance attestation**. With the [GitHub CLI](https://cli.github.com):
+
+```bash
+gh attestation verify vigils-cli-linux-x64.tar.gz --repo duncatzat/vigils
+```
+
+This confirms the artifact was built by Vigils' official CI from this repository (SLSA provenance
+via Sigstore) — i.e. not swapped or tampered with after the build. The CLI archives, desktop
+installers, and the extension zip are all attested.
+
 The **Chrome extension** lives in `extensions/chrome-mv3/` — load it unpacked via
 `chrome://extensions` → *Developer mode* → *Load unpacked* (it talks to `vigil-native-host`).
 
