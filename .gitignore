@@ -38,6 +38,11 @@ apps/desktop/gen/
 # Claude Code harness meta(用户度统计 / MCP 列表 / session 工具产物,非项目内容)
 /ONBOARDING.md
 
+# 内部策略素材(roadmap / launch-kit / 发布文案)—— 仅内部库,**绝不入公开仓**;
+# 纵深防御:即便干净移植误 cp 进来,也被此处挡在 commit 之外。
+/docs/strategy/
+**/launch-kit/
+
 # Secrets —— 即便我们有 OS Keychain,也兜底禁止任何本地 dotenv 进入 git
 .env
 .env.*
