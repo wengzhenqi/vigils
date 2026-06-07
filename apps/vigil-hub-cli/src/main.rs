@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vigil_hub_cli::demo::{self, DemoArgs};
 use vigil_hub_cli::hook::{self, HookArgs};
+use vigil_hub_cli::quickstart;
 use vigil_hub_cli::serve::{self, ServeArgs};
 use vigil_hub_cli::setup::{self, SetupArgs};
 use vigil_hub_cli::setup_mcp::{self, McpServerClass};
@@ -70,6 +71,9 @@ enum Command {
     Checkpoint(CliCheckpointArgs),
     /// 校验审计链:先链内一致性(防篡断裂),再比对 checkpoint 锚点(防整链重写)。三态如实输出。
     Verify(CliVerifyArgs),
+    /// 引导首跑(**只读**):检测你机器上的 AI agent + MCP server 与保护状态,并给出
+    /// 「看 demo → 一键保护 → 验证」三步。**不改任何配置**(检测=只读 preview)。
+    Quickstart,
 }
 
 #[derive(clap::Args, Debug)]
@@ -407,6 +411,22 @@ fn main() -> std::process::ExitCode {
         }
         Some(Command::Checkpoint(args)) => run_checkpoint(args.ledger),
         Some(Command::Verify(args)) => run_verify(args.ledger),
+        Some(Command::Quickstart) => {
+            // 只读引导:检测需要 home(找各 agent 配置)+ exe(preview 构造 wrap argv;本命令不显示)。
+            let Some(home) = dirs::home_dir() else {
+                eprintln!("vigil-hub quickstart: cannot locate your home directory");
+                return std::process::ExitCode::FAILURE;
+            };
+            let exe = std::env::current_exe().ok();
+            let exe_str = exe
+                .as_deref()
+                .and_then(|p| p.to_str())
+                .unwrap_or("vigil-hub");
+            match quickstart::run(&home, exe_str) {
+                0 => std::process::ExitCode::SUCCESS,
+                _ => std::process::ExitCode::FAILURE,
+            }
+        }
     }
 }
 

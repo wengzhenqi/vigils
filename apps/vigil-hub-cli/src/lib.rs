@@ -12,6 +12,7 @@ pub mod add_remote;
 pub mod demo;
 pub mod hook;
 pub mod inspect;
+pub mod quickstart;
 pub mod serve;
 pub mod setup;
 pub mod setup_mcp;

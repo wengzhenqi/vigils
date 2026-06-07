@@ -8,6 +8,22 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.33] — 2026-06-08
+
+A guided first-run: `vigil-hub quickstart`.
+
+### Added
+
+- **`vigil-hub quickstart` — one screen that tells a new user exactly what to do.** After
+  installing, it's not obvious what to run first. `quickstart` answers it, **read-only** (it
+  changes nothing): it detects the AI agents on your machine (Claude Code, Codex, Cursor,
+  Windsurf), counts their MCP servers, and shows how many are already behind Vigil vs. still
+  unprotected — then points you at the three next steps: see it work (`vigil-hub demo`), protect
+  everything with one reversible command (`vigil-hub setup --all`, or `setup --mcp` to preview
+  first), and watch/verify (`setup --mcp --doctor`, `vigil-hub verify`, or the desktop app).
+  Detection reuses the same read-only preview that `setup --mcp` uses, so it never edits a
+  config — actually protecting your agents still requires an explicit `setup --all`.
+
 ## [v0.1.32] — 2026-06-08
 
 The audit checkpoint anchor (v0.1.31) now activates automatically.

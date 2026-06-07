@@ -8,6 +8,20 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.33] — 2026-06-08
+
+引导首跑:`vigil-hub quickstart`。
+
+### 新增
+
+- **`vigil-hub quickstart` —— 一屏告诉新用户该做什么。** 装完之后先跑什么并不显然。`quickstart`
+  来回答,且**只读**(它不改任何东西):它检测你机器上的 AI agent(Claude Code、Codex、Cursor、
+  Windsurf),统计各自的 MCP server 数,并显示有几个已在 Vigil 保护下、几个还没保护 —— 然后给出
+  三步:看它工作(`vigil-hub demo`)、一条可逆命令保护全部(`vigil-hub setup --all`,或先
+  `setup --mcp` 预览)、查看/验证(`setup --mcp --doctor`、`vigil-hub verify`,或桌面应用)。
+  检测复用了 `setup --mcp` 同一套**只读** preview,因此从不改写配置 —— 真正接入仍需你显式跑
+  `setup --all`。
+
 ## [v0.1.32] — 2026-06-08
 
 审计 checkpoint 锚点(v0.1.31)现在自动生效。
