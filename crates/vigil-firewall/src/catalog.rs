@@ -44,7 +44,12 @@ const fn e(
     tool: &'static str,
     effects: &'static [EffectKind],
 ) -> CatalogEntry {
-    CatalogEntry { server_hints, tool, effects, destructive: false }
+    CatalogEntry {
+        server_hints,
+        tool,
+        effects,
+        destructive: false,
+    }
 }
 
 /// 静态目录。**编译进签名二进制**(不走用户家目录可写的外部 JSON —— 那是可被篡改下调风险的攻击面)。
@@ -54,15 +59,27 @@ static CATALOG: &[CatalogEntry] = &[
     e(&["filesystem", "file", "fs"], "read_file", &[FsRead]),
     e(&["filesystem", "file", "fs"], "read_text_file", &[FsRead]),
     e(&["filesystem", "file", "fs"], "read_media_file", &[FsRead]),
-    e(&["filesystem", "file", "fs"], "read_multiple_files", &[FsRead]),
+    e(
+        &["filesystem", "file", "fs"],
+        "read_multiple_files",
+        &[FsRead],
+    ),
     e(&["filesystem", "file", "fs"], "list_directory", &[FsRead]),
-    e(&["filesystem", "file", "fs"], "list_directory_with_sizes", &[FsRead]),
+    e(
+        &["filesystem", "file", "fs"],
+        "list_directory_with_sizes",
+        &[FsRead],
+    ),
     e(&["filesystem", "file", "fs"], "directory_tree", &[FsRead]),
     e(&["filesystem", "file", "fs"], "search_files", &[FsRead]),
     e(&["filesystem", "file", "fs"], "get_file_info", &[FsRead]),
     e(&["filesystem", "file", "fs"], "write_file", &[FsWrite]),
     e(&["filesystem", "file", "fs"], "edit_file", &[FsWrite]),
-    e(&["filesystem", "file", "fs"], "create_directory", &[FsWrite]),
+    e(
+        &["filesystem", "file", "fs"],
+        "create_directory",
+        &[FsWrite],
+    ),
     e(&["filesystem", "file", "fs"], "move_file", &[FsWrite]),
     // ── @modelcontextprotocol/server-fetch / 各类 http 取数 ──
     e(&["fetch", "http", "web"], "fetch", &[NetOutbound]),
@@ -74,21 +91,53 @@ static CATALOG: &[CatalogEntry] = &[
     e(&["git"], "git_add", &[FsWrite]),
     e(&["git"], "git_commit", &[FsWrite]),
     // ── github MCP(远端 API,用 token 鉴权 → Net + Secret;写操作另含对外发布)──
-    e(&["github"], "search_repositories", &[NetOutbound, SecretUse]),
+    e(
+        &["github"],
+        "search_repositories",
+        &[NetOutbound, SecretUse],
+    ),
     e(&["github"], "get_file_contents", &[NetOutbound, SecretUse]),
     e(&["github"], "get_issue", &[NetOutbound, SecretUse]),
     e(&["github"], "list_issues", &[NetOutbound, SecretUse]),
-    e(&["github"], "create_issue", &[NetOutbound, SecretUse, CommSend]),
-    e(&["github"], "create_pull_request", &[NetOutbound, SecretUse, CommSend]),
-    e(&["github"], "add_issue_comment", &[NetOutbound, SecretUse, CommSend]),
-    e(&["github"], "create_or_update_file", &[NetOutbound, SecretUse, CommSend]),
-    e(&["github"], "push_files", &[NetOutbound, SecretUse, CommSend]),
+    e(
+        &["github"],
+        "create_issue",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
+    e(
+        &["github"],
+        "create_pull_request",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
+    e(
+        &["github"],
+        "add_issue_comment",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
+    e(
+        &["github"],
+        "create_or_update_file",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
+    e(
+        &["github"],
+        "push_files",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
     // ── brave-search ──
     e(&["brave"], "brave_web_search", &[NetOutbound, SecretUse]),
     e(&["brave"], "brave_local_search", &[NetOutbound, SecretUse]),
     // ── slack(对外发消息;用 token)──
-    e(&["slack"], "slack_post_message", &[NetOutbound, SecretUse, CommSend]),
-    e(&["slack"], "slack_reply_to_thread", &[NetOutbound, SecretUse, CommSend]),
+    e(
+        &["slack"],
+        "slack_post_message",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
+    e(
+        &["slack"],
+        "slack_reply_to_thread",
+        &[NetOutbound, SecretUse, CommSend],
+    ),
     // ── @modelcontextprotocol/server-postgres(只读 query server)──
     e(&["postgres", "postgresql", "pg"], "query", &[DbRead]),
 ];
@@ -182,7 +231,9 @@ mod tests {
     #[test]
     fn unknown_tool_or_server_no_effect() {
         // 未知工具 → 不改。
-        assert!(effects_of("filesystem", "totally_unknown_tool").effects.is_empty());
+        assert!(effects_of("filesystem", "totally_unknown_tool")
+            .effects
+            .is_empty());
         // tool 名匹配但 server hint 不匹配 → 不改(write_file 在一个与 fs 无关的 server 上)。
         assert!(effects_of("weather-api", "write_file").effects.is_empty());
     }
@@ -206,7 +257,10 @@ mod tests {
     #[test]
     fn dedup_within_extractor() {
         // 同一效应已存在时不重复追加。
-        let mut ev = EffectVector { effects: vec![FsRead], ..Default::default() };
+        let mut ev = EffectVector {
+            effects: vec![FsRead],
+            ..Default::default()
+        };
         CatalogExtractor::new().extract(&call("filesystem", "read_file"), &mut ev);
         assert_eq!(ev.effects, vec![FsRead]);
     }

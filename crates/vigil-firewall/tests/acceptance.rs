@@ -811,7 +811,11 @@ fn catalog_classifies_known_tool_by_identity() {
 fn catalog_does_not_suppress_arg_extractor_effects() {
     let (_l, fw, sid) = setup("/proj", vec![]);
     // 目录无此 (server, tool) 项 → 目录贡献 0;但 args.path 让 PathExtractor 照常分类。
-    let call = mk_call(&sid, "some_unknown_write_tool", json!({ "path": "/proj/src/x.rs" }));
+    let call = mk_call(
+        &sid,
+        "some_unknown_write_tool",
+        json!({ "path": "/proj/src/x.rs" }),
+    );
     let out = fw
         .evaluate(
             &call,
