@@ -125,11 +125,18 @@ then namespaces its tools (`fs__…`, `github__…`) into `tools/list`.
 ## Step 3 — Point your agent at `vigil-hub`
 
 Use a shared **ledger path** so the desktop app and CLI see the same audit trail. The desktop app
-reads `data_local_dir()/Vigil/ledger.sqlite`:
+reads `data_local_dir()/Vigil/ledger.sqlite3`:
 
-- Windows: `%LOCALAPPDATA%\Vigil\ledger.sqlite`
-- Linux: `~/.local/share/Vigil/ledger.sqlite`
-- macOS: `~/Library/Application Support/Vigil/ledger.sqlite`
+- Windows: `%LOCALAPPDATA%\Vigil\ledger.sqlite3`
+- Linux: `~/.local/share/Vigil/ledger.sqlite3`
+- macOS: `~/Library/Application Support/Vigil/ledger.sqlite3`
+
+The filename must be exactly `ledger.sqlite3` (with the `3`) and the directory must be
+`data_local_dir()` — a path mismatch means the desktop reads a *different* file and the
+Activity Feed stays empty. Easiest path: run `vigil-hub setup --mcp` / `setup --all`, which
+auto-targets this shared ledger. Do **not** omit `--ledger` on a manual `serve --stdio` — that
+uses an in-memory ledger the desktop can't see. `serve`/`wrap` print the resolved ledger path
+on startup, so you can compare it with the desktop's.
 
 In the snippets below, replace the `--ledger` / `--upstream-config` paths and the `vigil-hub` path
 (use the absolute `.exe` path on Windows, e.g. `C:\\Vigil\\vigil-hub.exe`).
@@ -143,7 +150,7 @@ Project `.mcp.json` (or user-level `~/.claude.json` → `mcpServers`):
   "mcpServers": {
     "vigil": {
       "command": "vigil-hub",
-      "args": ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite", "--upstream-config", "./upstreams.json"]
+      "args": ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite3", "--upstream-config", "./upstreams.json"]
     }
   }
 }
@@ -158,7 +165,7 @@ Run `/mcp` in Claude Code — `vigil` should show **connected**, with your upstr
 ```toml
 [mcp_servers.vigil]
 command = "vigil-hub"
-args = ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite", "--upstream-config", "./upstreams.json"]
+args = ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite3", "--upstream-config", "./upstreams.json"]
 ```
 
 ### Cursor

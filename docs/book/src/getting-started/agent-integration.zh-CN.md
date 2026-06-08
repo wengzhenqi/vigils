@@ -117,11 +117,16 @@ vigil-hub serve --stdio --ledger ./vigil.db --upstream-config ./upstreams.json
 ## 第 3 步 —— 把 agent 指向 `vigil-hub`
 
 用**同一个 ledger 路径**，让桌面应用和 CLI 看到同一份审计。桌面应用读
-`data_local_dir()/Vigil/ledger.sqlite`：
+`data_local_dir()/Vigil/ledger.sqlite3`：
 
-- Windows：`%LOCALAPPDATA%\Vigil\ledger.sqlite`
-- Linux：`~/.local/share/Vigil/ledger.sqlite`
-- macOS：`~/Library/Application Support/Vigil/ledger.sqlite`
+- Windows：`%LOCALAPPDATA%\Vigil\ledger.sqlite3`
+- Linux：`~/.local/share/Vigil/ledger.sqlite3`
+- macOS：`~/Library/Application Support/Vigil/ledger.sqlite3`
+
+文件名必须**恰好是 `ledger.sqlite3`**（带 `3`）、目录是 `data_local_dir()` —— 路径不一致桌面就读到
+*另一个*文件，Activity Feed 一直空。最省心:跑 `vigil-hub setup --mcp` / `setup --all`，自动指向这个
+共享账本。手动 `serve --stdio` **切勿省略 `--ledger`** —— 省略 = 内存账本，桌面看不到。`serve`/`wrap`
+启动时会打印解析后的账本路径,可与桌面读的路径比对。
 
 下面的片段里，替换 `--ledger` / `--upstream-config` 路径和 `vigil-hub` 路径（Windows 用绝对
 `.exe` 路径，如 `C:\\Vigil\\vigil-hub.exe`）。
@@ -135,7 +140,7 @@ vigil-hub serve --stdio --ledger ./vigil.db --upstream-config ./upstreams.json
   "mcpServers": {
     "vigil": {
       "command": "vigil-hub",
-      "args": ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite", "--upstream-config", "./upstreams.json"]
+      "args": ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite3", "--upstream-config", "./upstreams.json"]
     }
   }
 }
@@ -150,7 +155,7 @@ vigil-hub serve --stdio --ledger ./vigil.db --upstream-config ./upstreams.json
 ```toml
 [mcp_servers.vigil]
 command = "vigil-hub"
-args = ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite", "--upstream-config", "./upstreams.json"]
+args = ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite3", "--upstream-config", "./upstreams.json"]
 ```
 
 ### Cursor

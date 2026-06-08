@@ -600,6 +600,16 @@ pub fn anchor_checkpoint_on_shutdown(ledger_path: Option<&std::path::Path>, ledg
 
 pub fn run(args: ServeArgs) -> Result<(), ServeError> {
     let (hub, ledger) = build_hub(&args)?;
+    // DEF-001 诊断:启动即在 stderr 打印解析后的账本路径 —— 桌面 GUI 看不到 CLI 写入事件的最
+    // 常见根因是 writer/reader 路径不一致(如文件名 ledger.sqlite vs ledger.sqlite3),打印出来
+    // 便于与桌面读的路径肉眼比对。内存账本(无 --ledger)显式警告:不持久、桌面看不到。
+    match args.ledger_path.as_deref() {
+        Some(p) => eprintln!("vigil-hub serve: audit ledger -> {}", p.display()),
+        None => eprintln!(
+            "vigil-hub serve: audit ledger = IN-MEMORY (no --ledger) -- events are NOT persisted \
+             and the desktop app will NOT see them; pass --ledger <shared path> or use `setup --mcp`"
+        ),
+    }
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     let mut reader = std::io::BufReader::new(stdin.lock());

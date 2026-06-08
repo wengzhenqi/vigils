@@ -66,6 +66,13 @@ pub fn run(args: &WrapArgs) -> Result<(), ServeError> {
         .ledger
         .clone()
         .or_else(crate::setup::default_ledger_path);
+    // DEF-001 诊断:把解析后的账本绝对路径打进启动 banner —— 桌面 GUI 看不到 CLI 事件
+    // 的最常见根因是 writer/reader 路径不一致(如文件名 ledger.sqlite vs ledger.sqlite3),
+    // 打印出来便于与桌面读的路径肉眼比对。
+    let ledger_display = ledger_path
+        .as_deref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "(in-memory)".to_string());
     let serve_args = ServeArgs {
         ledger_path,
         upstreams_config: None, // 不走文件;wrap 自己 attach(为透传 env)
@@ -138,10 +145,11 @@ pub fn run(args: &WrapArgs) -> Result<(), ServeError> {
          else they time out denied) -- pass --monitor for non-blocking audit-only"
     };
     eprintln!(
-        "vigil-hub wrap: guarding MCP server `{server}` cmd `{cmd}` (PID {pid}); audit -> shared ledger. {posture}.",
+        "vigil-hub wrap: guarding MCP server `{server}` cmd `{cmd}` (PID {pid}); audit ledger -> {ledger}. {posture}.",
         server = entry.name,
         cmd = entry.argv.first().map(String::as_str).unwrap_or("?"),
-        pid = std::process::id()
+        pid = std::process::id(),
+        ledger = ledger_display,
     );
 
     // stdio 主循环:agent <-> wrap(Vigil 网关)<-> 被包裹 server 子进程。

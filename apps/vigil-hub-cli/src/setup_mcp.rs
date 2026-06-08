@@ -137,22 +137,42 @@ fn classify_one(name: &str, entry: &Value) -> McpServerClass {
     let command = entry.get("command").and_then(Value::as_str);
     let raw_args = entry.get("args").and_then(Value::as_array);
 
-    // 已托管?(HIGH,Codex setup_mcp review)**收紧**判定:必须同时满足
-    //   ① command basename == vigil-hub[.exe]  ② args[0] == "wrap"  ③ args 含 sentinel。
-    // 仅"sentinel 在 args 里"会误判一个**自带 `--vigil-managed-mcp` 参数的正常 server** 为已保护
-    // → 被 mutation 增量跳过 → fail-open(该 server 永不受保护)。三条合取后正常 server 不可能误命中。
+    // 已托管 / Vigil 自身条目判定(DEF-002 修复 + 原 Codex review 防 fail-open)。
     if let (Some(cmd), Some(args)) = (command, raw_args) {
+        // 用 file_name()(完整文件名)精确匹配 `vigil-hub` / `vigil-hub.exe` —— **不**用 file_stem():
+        // 后者会把 `vigil-hub.sh` / `vigil-hub.py` 等单扩展名也剥成 `vigil-hub`,使一个恰好名为
+        // `vigil-hub.sh` 的第三方 server 误命中下面的"自身条目 Skip"→ 漏保护(adversarial review A2)。
         let basename_is_vigil = std::path::Path::new(cmd)
-            .file_stem()
+            .file_name()
             .and_then(|s| s.to_str())
-            .map(|s| s.eq_ignore_ascii_case("vigil-hub"))
+            .map(|s| s.eq_ignore_ascii_case("vigil-hub") || s.eq_ignore_ascii_case("vigil-hub.exe"))
             .unwrap_or(false);
-        let args0_is_wrap = args.first().and_then(Value::as_str) == Some("wrap");
+        let args0 = args.first().and_then(Value::as_str);
         let has_sentinel = args.iter().filter_map(Value::as_str).any(|a| {
             a == VIGIL_MANAGED_MCP_MARKER || a.starts_with(&format!("{VIGIL_MANAGED_MCP_MARKER}="))
         });
-        if basename_is_vigil && args0_is_wrap && has_sentinel {
+
+        // ① 已托管:`args[0]=="wrap"` + sentinel 即足够。
+        //    **DEF-002 trigger B 修复**:不再要求 command basename==vigil-hub —— 否则从改名 / 带版本号
+        //    的二进制(如 `vigil-hub-0.1.4`、符号链接 `vh`)再跑 setup 时,已 wrap 的条目认不出 → 被
+        //    二次 wrap。sentinel 是 Vigil 自有标记、args[0]=="wrap" 锚定为本网关 shim,二者合取后第三方
+        //    server 不可能误命中(其 args[0] 不会是 "wrap";仅自带 `--vigil-managed-mcp` 参数也因 args[0]
+        //    ≠ "wrap" 被排除,原 Codex review 关切的 fail-open 仍被堵)。
+        if args0 == Some("wrap") && has_sentinel {
             return McpServerClass::AlreadyWrapped { name: name.into() };
+        }
+
+        // ② Vigil 自己的 server/gateway 条目**绝不 wrap**(会自我嵌套)。
+        //    **DEF-002 trigger A 修复**:官方文档把 Vigil 暴露为 MCP server 用的是
+        //    `{"command":"vigil-hub","args":["serve",...]}`(args[0]=="serve",非 "wrap"),旧逻辑把它
+        //    误判 Wrappable → wrap 包 serve 的嵌套网关。这里显式排除 vigil-hub 的 serve/wrap 自指条目。
+        //    收紧到 `basename==vigil-hub ∧ args[0]∈{serve,wrap}`,不误伤仅**名为** vigil 或**传** --serve
+        //    的第三方 server(它们的 command basename 不是 vigil-hub)。
+        if basename_is_vigil && matches!(args0, Some("serve") | Some("wrap")) {
+            return McpServerClass::Skipped {
+                name: name.into(),
+                reason: "Vigil's own server/gateway entry — never wrapped (would nest)",
+            };
         }
     }
 
@@ -426,21 +446,13 @@ fn wrap_entry(
 }
 
 /// 从 wrap 条目 self-describing 还原原始条目(纯函数)。非 Vigil 托管 / 形状异常 → `None`(不动)。
-/// 判据与 `classify_one` 的 AlreadyWrapped 一致:basename==vigil-hub + args[0]=="wrap" + sentinel。
+/// 判据与 `classify_one` 的 AlreadyWrapped 一致:args[0]=="wrap" + sentinel + sentinel 紧跟 `--`。
+/// **DEF-002 trigger B**:不再要求 command basename==vigil-hub —— 让改名 / 带版本号的二进制
+/// (`vigil-hub-0.1.4`、符号链接)写出的 wrap 也能被 `--uninstall` 正确还原。sentinel + 紧邻 `--`
+/// 的结构已唯一标识本网关 wrap 形态,basename 冗余且会挡住还原。
 fn unwrap_entry(wrapped: &Value) -> Option<Value> {
     let obj = wrapped.as_object()?;
     let args = obj.get("args")?.as_array()?;
-    let cmd_is_vigil = obj
-        .get("command")
-        .and_then(Value::as_str)
-        .map(|c| {
-            std::path::Path::new(c)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.eq_ignore_ascii_case("vigil-hub"))
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
     let args0_wrap = args.first().and_then(Value::as_str) == Some("wrap");
     // **sentinel-anchored 分隔符**:`wrapped_argv` 里 sentinel **紧跟** `--`,故 separator = sentinel_idx+1。
     // **不**用 `position("--")` 找第一个 `--` —— 若 server 名 / env-key 字面恰是 `--`(病态但可能)会撞
@@ -456,7 +468,7 @@ fn unwrap_entry(wrapped: &Value) -> Option<Value> {
     if args.get(sent + 1).and_then(Value::as_str) != Some("--") {
         return None; // sentinel 后必紧跟 `--`;否则非 Vigil 标准 wrap 形态,不动(fail-safe)
     }
-    if !(cmd_is_vigil && args0_wrap) {
+    if !args0_wrap {
         return None;
     }
     // sentinel 之后第 2 元素起即原始 argv(逐字还原)。
@@ -1771,6 +1783,89 @@ mod tests {
             matches!(c[0], McpServerClass::AlreadyWrapped { .. }),
             "vigil-hub + wrap + sentinel 须判 AlreadyWrapped;实际 {:?}",
             c[0]
+        );
+    }
+
+    #[test]
+    fn vigil_serve_self_entry_is_skipped_not_wrapped() {
+        // DEF-002 trigger A:官方文档把 Vigil 暴露为 MCP server 用 `vigil-hub serve --stdio`。
+        // 旧逻辑(只认 args[0]=="wrap")把它误判 Wrappable → setup --apply 自我嵌套 wrap(wrap 包 serve)。
+        // 现须判 Skipped,绝不 wrap 自身条目。
+        let cfg = json!({"mcpServers": {
+            "vigil": {"command": "/usr/local/bin/vigil-hub",
+                      "args": ["serve", "--stdio", "--ledger", "~/.local/share/Vigil/ledger.sqlite3"]}
+        }});
+        let c = classify_user_scope_servers(&cfg);
+        assert!(
+            matches!(c[0], McpServerClass::Skipped { .. }),
+            "vigil-hub serve 自指条目须 Skipped(防自我嵌套 wrap);实际 {:?}",
+            c[0]
+        );
+        // 仅**名为** vigil 的第三方 server(command 非 vigil-hub)仍须 Wrappable(不误伤)。
+        let cfg2 = json!({"mcpServers": {
+            "vigil": {"command": "npx", "args": ["serve", "x"]}
+        }});
+        assert!(matches!(
+            classify_user_scope_servers(&cfg2)[0],
+            McpServerClass::Wrappable { .. }
+        ));
+        // Windows 真二进制 `vigil-hub.exe serve` 也须 Skipped(file_name 精确匹配)。
+        let cfg_exe = json!({"mcpServers": {
+            "vigil": {"command": "C:/Vigil/vigil-hub.exe", "args": ["serve", "--stdio"]}
+        }});
+        assert!(matches!(
+            classify_user_scope_servers(&cfg_exe)[0],
+            McpServerClass::Skipped { .. }
+        ));
+        // A2 边界:恰名为 `vigil-hub.sh` 的第三方 server 跑 serve **不得**被 Skip(file_stem 会误剥
+        // .sh 成 vigil-hub → 漏保护;file_name 精确匹配避免)。须 Wrappable。
+        let cfg_sh = json!({"mcpServers": {
+            "thirdparty": {"command": "/opt/tools/vigil-hub.sh", "args": ["serve", "--port", "0"]}
+        }});
+        assert!(
+            matches!(
+                classify_user_scope_servers(&cfg_sh)[0],
+                McpServerClass::Wrappable { .. }
+            ),
+            "vigil-hub.sh(非 Vigil 真二进制)须 Wrappable,不得 Skip 漏保护;实际 {:?}",
+            classify_user_scope_servers(&cfg_sh)[0]
+        );
+    }
+
+    #[test]
+    fn wrapped_from_renamed_binary_is_still_already_wrapped() {
+        // DEF-002 trigger B:从改名 / 带版本号的二进制(basename ≠ vigil-hub)写出的 wrap,
+        // 再跑 setup 须仍认出 AlreadyWrapped(否则二次 wrap)。判据已放宽为 args[0]=="wrap" + sentinel。
+        for cmd in ["/opt/vigil-hub-0.1.4", "/usr/local/bin/vh", "vigilhub"] {
+            let cfg = json!({"mcpServers": {
+                "fs": {"command": cmd,
+                       "args": ["wrap", "--server-id", "fs", "--vigil-managed-mcp", "--", "npx", "x"]}
+            }});
+            let c = classify_user_scope_servers(&cfg);
+            assert!(
+                matches!(c[0], McpServerClass::AlreadyWrapped { .. }),
+                "改名二进制 {cmd} 写的 wrap 须仍判 AlreadyWrapped(防双包);实际 {:?}",
+                c[0]
+            );
+        }
+    }
+
+    #[test]
+    fn unwrap_restores_wrap_written_by_renamed_binary() {
+        // DEF-002 trigger B 对称:--uninstall 须能还原改名二进制写出的 wrap。
+        let wrapped = json!({
+            "command": "/opt/vigil-hub-0.1.4",
+            "args": ["wrap", "--server-id", "fs", "--vigil-managed-mcp", "--", "npx", "-y", "srv"]
+        });
+        let restored = unwrap_entry(&wrapped).expect("renamed-binary wrap must be unwrappable");
+        assert_eq!(restored.get("command").and_then(Value::as_str), Some("npx"));
+        assert_eq!(
+            restored
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|a| a.len()),
+            Some(2),
+            "原 argv [-y, srv] 应逐字还原"
         );
     }
 
