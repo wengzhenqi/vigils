@@ -8,6 +8,21 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.1.34] — 2026-06-09
+
+真机测试 Claude Code / Codex 接入时发现的缺陷修复。
+
+- **桌面 Activity Feed 现在能反映 CLI 写入的事件**(DEF-001)。根因是账本路径不一致:接入指南
+  指向 `ledger.sqlite`,而桌面读 `ledger.sqlite3`,导致 CLI 与桌面用了两个不同文件、Feed 一直空
+  (实时监听本身正常)。已订正双语接入指南;`serve`/`wrap` 启动时打印解析后的账本绝对路径,使用
+  内存账本(桌面看不到)时响亮警告。
+- **`setup --mcp` 不再嵌套 wrap Vigil 自身的 server**(DEF-002)。文档里的 `vigil-hub serve`
+  自指条目曾被误判为可包裹,产生 wrap 套 serve 的嵌套网关。`setup` 现在跳过 Vigil 自身的 serve/wrap
+  条目,且"已包裹"检测不再依赖二进制文件名(改名/带版本号的二进制写出的 wrap 不会被二次包裹)。
+  可经 `--uninstall` 还原。已对抗审查。
+
+生产防护路径(firewall / redaction / audit)无变更。每个产物照例带 build provenance + 校验和。
+
 ## [v0.1.33] — 2026-06-08
 
 引导首跑:`vigil-hub quickstart`。

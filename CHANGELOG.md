@@ -8,6 +8,25 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.1.34] — 2026-06-09
+
+Bug fixes from real-machine testing of the Claude Code / Codex integration.
+
+- **Desktop Activity Feed now reflects CLI-written events** (DEF-001). Root cause was a
+  ledger-path mismatch: the integration guide pointed at `ledger.sqlite` while the desktop
+  reads `ledger.sqlite3`, so the CLI and the desktop used two different files and the feed
+  stayed empty (the live watcher itself was fine). Fixed the bilingual integration guide;
+  `serve`/`wrap` now print the resolved ledger absolute path at startup and warn loudly when
+  an in-memory ledger is used (which the desktop cannot see).
+- **`setup --mcp` no longer nests-wraps Vigil's own server** (DEF-002). The documented
+  `vigil-hub serve` self-entry was mis-classified as wrappable, producing a wrap-around-serve
+  nested gateway. `setup` now skips Vigil's own serve/wrap entries, and already-wrapped
+  detection no longer depends on the binary's filename, so a renamed/versioned binary's wrap
+  isn't double-wrapped. Reversible via `--uninstall`. Adversarially reviewed.
+
+No changes to the production protection paths (firewall / redaction / audit). Build
+provenance + checksums on every artifact as usual.
+
 ## [v0.1.33] — 2026-06-08
 
 A guided first-run: `vigil-hub quickstart`.
