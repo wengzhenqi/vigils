@@ -12,6 +12,7 @@ export const TIER_DEFAULT = "balanced";
 /**
  * Secret 类 finding(凭证 / 密钥 / 私钥)—— strict 和 recall-first 均 block。
  * 与 `crates/vigil-redaction/src/lib.rs` HARD_RULES `name` 字面量对齐。
+ * `vigil-browser` wire 短名由 FINDING_KIND_ALIASES 归一化后再查本集合。
  */
 export const SECRET_KINDS = Object.freeze(
     new Set([
@@ -31,6 +32,17 @@ export const SECRET_KINDS = Object.freeze(
 );
 
 /**
+ * vigil-browser wire protocol uses stable short names for a few secret kinds,
+ * while vigil-redaction hard rules use long names. Tier logic accepts both and
+ * evaluates the canonical long name so strict/recall-first cannot miss aliases.
+ */
+export const FINDING_KIND_ALIASES = Object.freeze({
+    aws_access_key: "aws_access_key_id",
+    anthropic_key: "anthropic_api_key",
+    openai_key: "openai_api_key",
+});
+
+/**
  * PII 类 finding(非凭证)—— recall-first 的"多类命中"阈值参与者。
  * v0.4 Stage 2+ 接入 Privacy Filter 模型层时必须扩展此集合(private_person /
  * private_phone / private_address / private_date)并同步更新单测。
@@ -42,6 +54,10 @@ export const PII_KINDS = Object.freeze(
 );
 
 /** `internal_ipv4` 等不在 SECRET / PII,仅记数不影响决策 —— tier 逻辑按 "distinct count" */
+
+export function canonicalFindingKind(kind) {
+    return FINDING_KIND_ALIASES[kind] || kind;
+}
 
 /**
  * 应用 3 档决策层。
@@ -69,8 +85,9 @@ export function applyTierDecision(resp, tier) {
     }
 
     // redact 路径:按 tier 决策
-    const hasSecret = findings.some((f) => SECRET_KINDS.has(f));
-    const distinctKinds = new Set(findings).size;
+    const canonicalFindings = findings.map(canonicalFindingKind);
+    const hasSecret = canonicalFindings.some((f) => SECRET_KINDS.has(f));
+    const distinctKinds = new Set(canonicalFindings).size;
 
     if (tier === "strict") {
         if (hasSecret) {
