@@ -478,6 +478,65 @@ impl Hub {
         Ok(g.clone().unwrap_or_else(|| "system".to_string()))
     }
 
+    /// P0 注入防护 Slice 3(T6):对 tool descriptor 的 description(+ input schema 内
+    /// 递归收集的所有 `description` 字段)做元指令扫描,命中则写软信号审计事件。
+    ///
+    /// **零回显铁律**(项目「untrusted input not in errors」):审计 payload 绝不含
+    /// description 原文,只记 server_id / tool_name / 命中数 + 被扫文本的 sha256 前缀
+    /// (供 replay 时定位是哪份 descriptor,而不泄露投毒文本本身)。
+    ///
+    /// **软信号**:本函数不返回 Err、不影响 caller 的 pin/approve 流程;扫描纯字符串不会
+    /// panic,审计写失败也吞掉(fail-safe,绝不 brick 首次 pin)。
+    fn audit_descriptor_meta_instructions(
+        &self,
+        server_id: &str,
+        tool_name: &str,
+        description: Option<&str>,
+        schema: &Value,
+    ) {
+        // 汇总待扫文本:tool 顶层 description + schema 内任意层级的 "description" 字符串。
+        // 投毒可藏在 inputSchema.properties.<field>.description,故递归全收。
+        let mut corpus = String::new();
+        if let Some(d) = description {
+            corpus.push_str(d);
+            corpus.push('\n');
+        }
+        collect_schema_descriptions(schema, &mut corpus);
+
+        if corpus.is_empty() {
+            return;
+        }
+
+        let findings = vigil_redaction::scan_meta_instructions(&corpus);
+        if findings.is_empty() {
+            return;
+        }
+
+        // 零回显:只对被扫文本取 sha256 前缀作定位锚点,不带原文。
+        let mut hasher = Sha256::new();
+        hasher.update(corpus.as_bytes());
+        let corpus_sha = hex::encode(hasher.finalize());
+        let corpus_sha_prefix = &corpus_sha[..16.min(corpus_sha.len())];
+
+        let session_id = self
+            .current_session_id()
+            .unwrap_or_else(|_| "system".to_string());
+        let _ = self.ledger.append_event(
+            &session_id,
+            "tool_descriptor.meta_instruction",
+            &json!({
+                "server_id": server_id,
+                "tool_name": tool_name,
+                "match_count": findings.len(),
+                "corpus_sha256_prefix": corpus_sha_prefix,
+            }),
+            Some(&format!(
+                "descriptor_meta_instruction server:{server_id} tool:{tool_name} matches:{}",
+                findings.len()
+            )),
+        );
+    }
+
     /// 在真实 spawn 上游 stdio 进程**之前**检查 command hash 是否漂移。
     /// 若漂移:写 `server.command_drifted` 审计,返 `Err(HubError::CommandDrift)`,
     /// caller(Hub startup 代码 / I08 UI)必须先 `approve_server_command_drift`。
@@ -771,6 +830,17 @@ impl Hub {
                         .pin_tool_descriptor(&server.server_id, tool_name, &hash)?;
                 match outcome {
                     PinOutcome::FirstSeen => {
+                        // P0 注入防护 Slice 3(T6):descriptor 首次见到=投毒进入审批关的时刻。
+                        // 扫 tool description + schema 内 description 字段的元指令(投毒诱导语)。
+                        // 软信号——只写审计警示让审批者/replay 可见投毒嫌疑,绝不阻断 pin/approve
+                        // (descriptor drift 的 fail-closed 是另一套)。失败路径 fail-safe:扫描纯字符串
+                        // 不会 panic;审计写失败也用 `let _` 吞掉,绝不 brick 首次 pin。
+                        self.audit_descriptor_meta_instructions(
+                            &server.server_id,
+                            tool_name,
+                            description,
+                            &schema,
+                        );
                         if self.config.auto_approve_first_seen_tools {
                             self.ledger
                                 .approve_tool_descriptor(&server.server_id, tool_name)?;
@@ -1317,6 +1387,31 @@ impl Hub {
                 )))
             }
         }
+    }
+}
+
+/// 递归收集 JSON 内任意层级 key 为 `"description"` 的字符串值,追加进 `out`。
+/// 供 Slice 3 元指令扫描使用——投毒可藏在 inputSchema.properties.<field>.description,
+/// 不止顶层 description,故对整个 schema 树做收集。纯字符串拼接,不会 panic。
+fn collect_schema_descriptions(v: &Value, out: &mut String) {
+    match v {
+        Value::Object(map) => {
+            for (k, val) in map {
+                if k == "description" {
+                    if let Some(s) = val.as_str() {
+                        out.push_str(s);
+                        out.push('\n');
+                    }
+                }
+                collect_schema_descriptions(val, out);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                collect_schema_descriptions(item, out);
+            }
+        }
+        _ => {}
     }
 }
 

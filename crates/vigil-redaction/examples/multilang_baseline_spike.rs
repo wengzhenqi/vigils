@@ -337,6 +337,8 @@ fn main() {
                     let src = match f.source {
                         FindingSource::Hard => "hard",
                         FindingSource::Model => "model",
+                        // P0 元指令软信号不流经本 spike 路径,仅兜底标注。
+                        FindingSource::MetaInstruction => "meta-instruction",
                     };
                     (l, f.span, src)
                 })

@@ -8,6 +8,24 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [Unreleased]
+
+### 新增 —— 提示注入防护(P0)
+
+Vigil 现在能检测并遏制工具输出与 MCP 工具描述里的**恶意指令注入**——这是 secret 外泄防护的互补另一半。
+
+- **元指令检测(软信号)**:启发式扫描工具结果里的提示注入语句("ignore previous instructions"、
+  角色重设、数据外泄祈使句)。刻意做成**软信号——绝不 deny**(语义、高误报);只提升 session 风险分,
+  与硬 secret 的 deny 路径严格分离。
+- **数据标记(Claude)**:被判注入嫌疑的工具结果会被 nonce 标签包裹为不可信数据(`updatedToolOutput`),
+  让模型当数据而非指令。Codex / Gemini / Cursor 降级为仅审计(无改写输出能力)。
+- **会话风险升档**:元指令命中在会话内累积,越阈后有效姿态自动升档(Low → Medium → High),收紧后续
+  工具调用。升档**只会更严**——基础姿态与决策表不变。
+- **MCP 工具投毒扫描**:在 descriptor 审批关扫描 tool 的 description 与 schema 的元指令,让投毒在审批时
+  可见(软信号、不阻断)。
+
+安全:零明文回显(审计/reason 只含 sha256 + 计数)、全程 fail-safe、已对抗式审查。
+
 ## [v0.2.0-beta.1] — 2026-06-11 — Hook-first 数据流控制平面(公开测试版)
 
 > **首个公开测试版。** Vigil 从"仅 MCP 网关"成长为本地**数据流控制平面**:`vigil-hub hook`

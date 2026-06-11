@@ -306,6 +306,88 @@ impl Ledger {
         Ok(id)
     }
 
+    /// 给指定 session 的 `risk_score` 累加 `delta`,返回累加后的新分(P0 注入防护
+    /// session risk 反馈环的写入口)。
+    ///
+    /// **为何必须 BEGIN IMMEDIATE**:hook 是**多进程并发写**(每个 PreToolUse/PostToolUse
+    /// 短 spawn 各持自己的 `Ledger` 连接,进程内 `Mutex` 跨进程不互斥)。本函数先 SELECT
+    /// 现值(或确保行存在)再 UPDATE,WAL 下默认 DEFERRED 事务会在升级写时撞
+    /// `SQLITE_BUSY_SNAPSHOT`(扩展码 517,busy_timeout 对此**不重试**直接失败)。
+    /// IMMEDIATE 在 BEGIN 即请求写锁(受 busy_timeout 串行化等待),拿锁后读到的必是最新值,
+    /// 杜绝 snapshot 冲突 —— 与 `append_event_internal` 的多 writer 事务模式一致。
+    ///
+    /// **幂等可靠**:session 行可能尚未由 `start_session` 建立(hook 先于显式建会话),
+    /// 故先 `INSERT OR IGNORE` 兜底建行(占位 source `"unknown"`,risk_score DEFAULT 0),
+    /// 再 UPDATE 累加,最后同事务内 SELECT 读回新分。三步在同一 IMMEDIATE 事务内完成,
+    /// 读到的累加结果不会被并发写者插入。
+    pub fn bump_session_risk(&self, session_id: &str, delta: i64) -> Result<i64> {
+        validate_nonempty("session_id", session_id)?;
+        let now = now_secs();
+        let mut guard = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
+        let tx = guard.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+        // session 行可能不存在(bump 先于 start_session)→ 先兜底建行,再 bump。
+        // 占位 source `"unknown"`:满足 NOT NULL 约束;若稍后 start_session 用真 source
+        // 插入,PRIMARY KEY 冲突会被那侧处理(本兜底只保证 bump 不丢)。
+        tx.execute(
+            "INSERT OR IGNORE INTO sessions (session_id, source, started_at) VALUES (?1, 'unknown', ?2)",
+            rusqlite::params![session_id, now],
+        )?;
+        tx.execute(
+            "UPDATE sessions SET risk_score = risk_score + ?1 WHERE session_id = ?2",
+            rusqlite::params![delta, session_id],
+        )?;
+        let new_score: i64 = tx.query_row(
+            "SELECT risk_score FROM sessions WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |r| r.get(0),
+        )?;
+        tx.commit()?;
+        Ok(new_score)
+    }
+
+    /// 用**指定** `session_id`(上游 CLI 会话标识)+ 真实 `source` 兜底建 session 行
+    /// (P0 注入防护 session risk 反馈环;`INSERT OR IGNORE` 幂等 —— 已存在则不动)。
+    ///
+    /// `bump_session_risk` 的兜底建行用占位 source `'unknown'`(它不知道真实来源);hook
+    /// 在 bump / 读 risk 前先调本函数,用真实 source(如 `"claude-hook"`)建行,避免 risk
+    /// 反馈环的会话行带 `'unknown'` source(T5c)。risk 累加 key = 上游会话 id(跨 hook 进程
+    /// 稳定),据此让多次短 spawn 的 hook 调用共享同一 session 的累计 risk。
+    ///
+    /// **不返回生成的 id**:`session_id` 由调用方提供(就是上游会话 id),非内部 UUID。
+    /// 已存在的行(无论 source 是真实值还是先前 bump 兜底的 `'unknown'`)不被覆盖。
+    pub fn ensure_session(&self, session_id: &str, source: &str) -> Result<()> {
+        validate_nonempty("session_id", session_id)?;
+        validate_nonempty("source", source)?;
+        let now = now_secs();
+        let conn = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (session_id, source, started_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![session_id, source, now],
+        )?;
+        Ok(())
+    }
+
+    /// 读取指定 session 当前 `risk_score`(P0 注入防护 session risk 反馈环的读入口)。
+    ///
+    /// session 行不存在 → 返回 0(尚未累积任何风险,等价"零风险"),不报错 —— PreToolUse
+    /// 在 hook 首次为某 session 调用时,该 session 可能还没被 `start_session`/`bump` 建行,
+    /// 此时按零风险解读(用 base 档,不升档)是安全且自然的语义。
+    ///
+    /// 纯读单行,无需 IMMEDIATE 事务(WAL 下读不阻塞写;读到的是当前提交快照)。
+    pub fn get_session_risk(&self, session_id: &str) -> Result<i64> {
+        validate_nonempty("session_id", session_id)?;
+        let conn = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
+        let score: Option<i64> = conn
+            .query_row(
+                "SELECT risk_score FROM sessions WHERE session_id = ?1",
+                rusqlite::params![session_id],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(score.unwrap_or(0))
+    }
+
     /// 追加一个**非 tool-call 类**事件到账本。
     ///
     /// - **caller 必须先调用 `vigil-redaction::redact`**,本函数不二次脱敏。

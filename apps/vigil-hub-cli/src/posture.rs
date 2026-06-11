@@ -126,6 +126,46 @@ pub fn decide(profile: PostureProfile, risk: RiskClass) -> PostureAction {
     }
 }
 
+// ─────────────────── session risk 反馈环升档(P0 注入防护 Slice 2a)───────────────────
+//
+// 反馈环:元指令命中累加 session risk → 累积到阈值 → posture **临时**升档收紧后续工具调用。
+// 升档**只**作用在 [`effective_profile`] 层(读取磁盘 base 档 + session risk → 算出有效档),
+// 绝不改写磁盘 base 档,也绝不动 [`decide`] 的穷举 SSOT 表。调用方先算 effective_profile,
+// 再把结果传给 decide。hook 接线是 Slice 2b(本 slice 只提供基础设施)。
+
+/// session risk 触发自动升档的累计分阈值。
+///
+/// = 3 次元指令命中 × `META_INSTRUCTION_RISK_DELTA`(vigil-redaction,值 8)= 24。
+/// 保守阈值:单次/双次命中(8/16)**不**升档,避免个别误报噪声触发升档摩擦;
+/// 累计到 3 次才升档(注入往往是多处指令性语言,3 次是"持续可疑"的合理信号)。可调。
+pub const SESSION_RISK_ESCALATION_THRESHOLD: i64 = 24;
+
+impl PostureProfile {
+    /// 升一档:Low→Medium / Medium→High / High→High(饱和,已是最严)。
+    ///
+    /// 用于 session risk 累积越阈时把有效档收紧一级;High 已是上限,饱和不再上升。
+    pub fn escalate(self) -> Self {
+        match self {
+            Self::Low => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::High,
+        }
+    }
+}
+
+/// 给定磁盘 base 档 + 当前 session risk,算出**有效**姿态档(供 `decide` 消费)。
+///
+/// session risk ≥ [`SESSION_RISK_ESCALATION_THRESHOLD`] → base 升一档;否则用 base 原档。
+/// 这是升档的**唯一**入口 —— 不改 base 档持久化、不改 `decide` SSOT;调用方先调本函数
+/// 拿有效档,再 `decide(有效档, risk_class)`。
+pub fn effective_profile(base: PostureProfile, session_risk: i64) -> PostureProfile {
+    if session_risk >= SESSION_RISK_ESCALATION_THRESHOLD {
+        base.escalate()
+    } else {
+        base
+    }
+}
+
 // ─────────────────────────── 持久化 ───────────────────────────
 
 /// 磁盘上的 posture 配置 shape:`{"version":1,"posture":"low"}`。
@@ -380,6 +420,96 @@ mod tests {
                 "LedgerTamper must be denied regardless of posture ({profile:?})"
             );
         }
+    }
+
+    #[test]
+    fn escalate_covers_all_transitions_with_high_saturation() {
+        // 全档位升档转移:Low→Medium / Medium→High / High→High(饱和)。
+        assert_eq!(PostureProfile::Low.escalate(), PostureProfile::Medium);
+        assert_eq!(PostureProfile::Medium.escalate(), PostureProfile::High);
+        assert_eq!(
+            PostureProfile::High.escalate(),
+            PostureProfile::High,
+            "High 已是最严档,升档饱和不再上升"
+        );
+    }
+
+    #[test]
+    fn effective_profile_threshold_boundary() {
+        // 阈值边界:23(< 24)不升档;24(= 阈值)升档。
+        assert_eq!(SESSION_RISK_ESCALATION_THRESHOLD, 24);
+        // 低于阈值:base 原样返回(各档不变)。
+        for base in ALL_PROFILES {
+            assert_eq!(
+                effective_profile(base, 23),
+                base,
+                "risk 23 (< {SESSION_RISK_ESCALATION_THRESHOLD}) 不应升档"
+            );
+            // 0 / 负值(防御)同样不升档。
+            assert_eq!(effective_profile(base, 0), base);
+        }
+        // 达到/超过阈值:升一档(High 饱和)。
+        assert_eq!(
+            effective_profile(PostureProfile::Low, 24),
+            PostureProfile::Medium
+        );
+        assert_eq!(
+            effective_profile(PostureProfile::Medium, 24),
+            PostureProfile::High
+        );
+        assert_eq!(
+            effective_profile(PostureProfile::High, 24),
+            PostureProfile::High
+        );
+        // 远超阈值同样升一档(不会跳两档)。
+        assert_eq!(
+            effective_profile(PostureProfile::Low, 1000),
+            PostureProfile::Medium
+        );
+    }
+
+    #[test]
+    fn decide_unchanged_under_effective_profile_composition() {
+        // 升档只在 effective_profile 层;decide 行为本身不变 —— 用 base 直接 decide
+        // 与"未越阈时先算 effective 再 decide"必须完全等价(SSOT 表未被改动)。
+        for base in ALL_PROFILES {
+            for risk in ALL_RISKS {
+                let eff = effective_profile(base, 0); // 未越阈 → eff == base
+                assert_eq!(
+                    decide(eff, risk),
+                    decide(base, risk),
+                    "未越阈时 effective_profile 不得改变 decide 结果 ({base:?}, {risk:?})"
+                );
+            }
+        }
+        // 越阈时:effective = base.escalate(),decide(effective) 必须等于 decide(升档后的 base)。
+        for base in ALL_PROFILES {
+            for risk in ALL_RISKS {
+                let eff = effective_profile(base, SESSION_RISK_ESCALATION_THRESHOLD);
+                assert_eq!(
+                    decide(eff, risk),
+                    decide(base.escalate(), risk),
+                    "越阈时 effective_profile 应等价于 base.escalate() ({base:?}, {risk:?})"
+                );
+            }
+        }
+        // 硬底线不可被升档绕过(其实是被升档"更严",但 RawSecret/LedgerTamper 本就恒 Deny):
+        // 升档后这两类仍 Deny,且 PlaceholderNative 只会更严不会更松。
+        assert_eq!(
+            decide(
+                effective_profile(PostureProfile::Low, 24),
+                RiskClass::RawSecret
+            ),
+            PostureAction::Deny
+        );
+        // Low + 越阈 → Medium:PlaceholderNative 由 Allow 收紧到 Ask(更严)。
+        assert_eq!(
+            decide(
+                effective_profile(PostureProfile::Low, 24),
+                RiskClass::PlaceholderNative
+            ),
+            PostureAction::Ask
+        );
     }
 
     #[test]

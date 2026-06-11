@@ -8,6 +8,29 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [Unreleased]
+
+### Added — prompt-injection defense (P0)
+
+Vigil now detects and contains malicious *instruction injection* in tool outputs and MCP tool
+descriptors — the complementary half of secret-exfiltration defense.
+
+- **Meta-instruction detection (soft signal)**: a heuristic scan for prompt-injection phrasing
+  ("ignore previous instructions", role-reset, exfiltration imperatives) in tool results.
+  Deliberately a **soft signal — it never denies** (semantic, high false-positive); it raises a
+  per-session risk score and is strictly separated from the hard-secret deny path.
+- **Datamarking (Claude)**: a tool result flagged for injection is wrapped in nonce-tagged
+  untrusted-data markers (`updatedToolOutput`) so the model treats it as data, never as
+  instructions. Codex / Gemini / Cursor degrade to audit-only (no output-rewrite capability).
+- **Session-risk escalation**: meta-instruction hits accumulate per session; past a threshold the
+  effective posture auto-escalates (Low → Medium → High), tightening subsequent tool calls.
+  Escalation **only ever tightens** — the base posture and the decision table are untouched.
+- **MCP tool-poisoning scan**: a tool's description and schema are scanned for meta-instructions
+  at the descriptor approval gate, making poisoning visible at approval time (soft, non-blocking).
+
+Security: zero plaintext echo (audit / reasons carry only sha256 + counts), fail-safe
+throughout, adversarially reviewed.
+
 ## [v0.2.0-beta.1] — 2026-06-11 — Hook-first data-flow control plane (public beta)
 
 > **First public beta.** Vigil grows from "MCP gateway only" into a local **data-flow control

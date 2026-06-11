@@ -302,6 +302,9 @@ fn main() {
                                 .map(|(_, engines)| engines.clone())
                                 .unwrap_or_else(|| vec!["model-unattributed".to_string()])
                         }
+                        // P0 元指令软信号不流经 ensemble 路径(独立 scan_meta_instructions),
+                        // 这里仅为 exhaustive match 兜底标注,bench 不消费此来源。
+                        FindingSource::MetaInstruction => vec!["meta-instruction".to_string()],
                     };
                     (l, f.span, src, f.kind)
                 })
