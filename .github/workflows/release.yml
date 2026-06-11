@@ -238,6 +238,8 @@ jobs:
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      # Pre-release tags (containing '-') build NSIS-only on Windows — see build steps.
+      REL_TAG: ${{ needs.create-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -271,12 +273,28 @@ jobs:
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
         working-directory: apps/desktop
         shell: bash
-        run: cargo tauri build --features gui --config '{"bundle":{"createUpdaterArtifacts":true}}'
+        run: |
+          # WiX/MSI rejects a non-numeric pre-release identifier (e.g. beta.1 — it demands
+          # numeric-only, <= 65535). A pre-release tag (contains '-') therefore builds
+          # NSIS-only on Windows (still produces the OTA updater artifact + .sig); stable
+          # tags and every other platform keep the conf default targets (Windows=nsis+msi).
+          extra=""
+          if [[ "$RUNNER_OS" == "Windows" && "$REL_TAG" == *-* ]]; then
+            extra=',"targets":["nsis"]'
+          fi
+          cargo tauri build --features gui --config "{\"bundle\":{\"createUpdaterArtifacts\":true${extra}}}"
 
       - name: Build desktop bundles (no signing key — plain installers)
         if: env.TAURI_SIGNING_PRIVATE_KEY == ''
         working-directory: apps/desktop
-        run: cargo tauri build --features gui
+        shell: bash
+        run: |
+          # Same MSI pre-release constraint as the signed step above.
+          extra=""
+          if [[ "$RUNNER_OS" == "Windows" && "$REL_TAG" == *-* ]]; then
+            extra=" --bundles nsis"
+          fi
+          cargo tauri build --features gui$extra
 
       # always(): 单个 bundle target(如某平台 rpm)失败不应拖垮整步,
       # 让已成功产出的其他安装包仍能上传(matrix 已 fail-fast: false)。
