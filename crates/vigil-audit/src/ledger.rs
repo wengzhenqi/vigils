@@ -362,7 +362,13 @@ impl Ledger {
 
         let now = now_secs();
         let mut guard = self.conn.lock().map_err(|_| AuditError::LockPoisoned)?;
-        let tx = guard.transaction()?;
+        // 进程内 Mutex 只串行**同一连接**;co-approval 引入了**多连接并发追加**(hook 进程
+        // 与 desktop/CLI 进程各持自己的 Ledger,跨进程 Mutex 不互斥)。WAL 下默认 DEFERRED
+        // 事务先 SELECT 链尾(取 read snapshot)再 INSERT,若期间另一连接已追加,升级写时报
+        // SQLITE_BUSY_SNAPSHOT(扩展码 517)——busy_timeout 对此**不重试**,直接失败。
+        // IMMEDIATE 在 BEGIN 即请求写锁(受 busy_timeout=5000 串行化等待),拿锁后才读链尾,
+        // 读到的必是最新值,杜绝 snapshot 冲突——这是 WAL 多 writer 追加链的正确事务模式。
+        let tx = guard.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
         let prev_hash: String = tx
             .query_row(
