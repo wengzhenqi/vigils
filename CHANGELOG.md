@@ -8,6 +8,26 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.0-beta.8] — 2026-06-16 — Injection hardening (session-risk DoS cap + boundary-injection whitelist)
+
+Two security fixes surfaced by a structured project review (dual adversarial sub-agent audit) and
+confirmed by two rounds of Codex code review.
+
+### Security
+
+- **Session-risk escalation is now capped per event.** A single poisoned or malicious tool result
+  could previously pack an unbounded number of meta-instruction phrases (`delta = unit × hits`),
+  unilaterally pushing the session posture to High and denial-of-servicing the user's legitimate
+  `secret://` placeholder tool calls. The per-event delta is now capped at 24 (the one-tier
+  escalation threshold), removing the parallel-path asymmetry with the MCP gateway's already-capped
+  path. Hit counts are still audited and cross-event accumulation still escalates normally.
+- **Execution-boundary secret injection now uses a character whitelist.** When a `secret://` alias
+  is substituted into a shell command, a resolved value containing shell metacharacters could escape
+  the placeholder's quoting context, trigger globbing, or split words — altering what actually runs.
+  Injection now requires the value to match `[A-Za-z0-9-_=.+/:@]` (covering tokens, keys, hex,
+  base64, JWTs, URLs); anything else is denied fail-closed with guidance to use an environment
+  variable. Codex review caught a blacklist gap (glob/tab/space) in the first cut — hence a whitelist.
+
 ## [v0.2.0-beta.7] — 2026-06-16 — Agent cooperation UX (denial guidance + effect coverage)
 
 Helps coding agents (Claude Code, Codex) understand Vigil's role as a collaborative security

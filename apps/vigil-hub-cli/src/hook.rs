@@ -894,6 +894,29 @@ fn boundary_inject_block_reason(tool_display: &str) -> String {
     )
 }
 
+/// 真值是否仅含可安全内联进 shell command 的字符(A-4.2,**白名单** fail-closed)。
+/// 执行边界注入是原位字节替换,且 Vigil **不知道**占位符落在哪种引号上下文(裸露 / `'...'` /
+/// `"..."`)。黑名单易漏(codex 审查实证:glob `*?[]{}`、`~`、空白分词、tab 都可能在某上下文
+/// 改写 command),故用**白名单**:只放行 token/key/hex/base64/jwt/url 常见字符集
+/// `[A-Za-z0-9-_=.+/:@]`;其余(引号、`$`、反引号、`;&|<>()`、空白、glob、`~` 等)一律拒绝
+/// 注入 → 引导改用环境变量。对齐项目"危险字符拒绝"纪律。空值视为安全(注入空串无害)。
+fn is_shell_safe_secret(s: &str) -> bool {
+    s.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '=' | '.' | '+' | '/' | ':' | '@')
+    })
+}
+
+/// 执行边界注入因真值含 shell 元字符被拒的终态引导(A-4.2)。**不回显真值 / 命中字符**。
+fn boundary_inject_metachar_block_reason(tool_display: &str) -> String {
+    format!(
+        "Vigil blocked tool `{tool_display}`: a `secret://` alias resolves to a value containing \
+         shell metacharacters (quotes, `$`, backticks, `;`, ...) that would break the command's \
+         quoting and could change what actually executes. This is a FINAL security decision, not a \
+         retryable error — Vigil refuses to inject it to prevent command injection. Pass the secret \
+         via an environment variable instead, or report to the user."
+    )
+}
+
 /// α2 执行边界注入尝试(TASK-005)。返回:
 /// - `None`:**不适用** —— 未配注入 / 注入未开 / CLI 不支持 updatedInput / 非边界工具 /
 ///   command 无 alias / 无 ledger 审计落点 → 调用方落回三档姿态决策(无行为回归)。
@@ -1050,6 +1073,13 @@ fn try_boundary_injection(
                 tool_display,
             )));
         };
+        // A-4.2:真值含白名单外字符会逃逸占位符所在引号上下文 / 触发 glob / 空白分词,改变
+        // command 语义(命令注入面)→ fail-closed deny,绝不静默注入可能改写命令的真值。
+        if !is_shell_safe_secret(value.expose()) {
+            return Some(HookOutcome::Deny(boundary_inject_metachar_block_reason(
+                tool_display,
+            )));
+        }
         // 真值唯一暴露点:紧邻注入目的地,不存入任何长生命周期结构。
         rewritten.push_str(value.expose());
         cursor = t.end;
@@ -1290,7 +1320,7 @@ fn bump_meta_risk(args: &HookArgs, upstream_session: Option<&str>, meta_hits: us
     if let Err(e) = ledger.ensure_session(sid, &hook_source(args.cli)) {
         eprintln!("vigil-hook: meta-instruction ensure_session failed ({e}); continuing to bump");
     }
-    let delta = META_INSTRUCTION_RISK_DELTA * meta_hits as i64;
+    let delta = meta_risk_delta(meta_hits);
     if let Err(e) = ledger.bump_session_risk(sid, delta) {
         eprintln!("vigil-hook: meta-instruction bump_session_risk failed ({e}); risk not bumped");
     }
@@ -1831,9 +1861,19 @@ fn extract_value<'a>(obj: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     keys.iter().find_map(|k| map.get(*k))
 }
 
-/// 元指令单次命中的 risk 累加权重。命中数 × 本值 = bump delta。
+/// 元指令单次命中的 risk 累加权重。命中数 × 本值 = bump delta(经 [`meta_risk_delta`] 封顶)。
 /// = 3 次命中即达 [`posture::SESSION_RISK_ESCALATION_THRESHOLD`](24)升档,与计划文档一致。
 const META_INSTRUCTION_RISK_DELTA: i64 = 8;
+
+/// 单事件元指令 risk delta —— 命中数 × 单位权重,但**封顶**到一次升档阈值(3× 单位 = 24)。
+///
+/// 防护(A-2.3 对称性审计):单条被攻陷/恶意的工具结果里塞**任意多**元指令短语时,
+/// 此前 `8 × meta_hits` 无上限 → delta 可达数百 → 单方面把 session 顶到 High,对用户
+/// 合法 `secret://` 占位符工具调用制造 DoS。封顶后单事件最多升一档,需跨多个可疑事件
+/// 累加才升 High(与 MCP 侧 `audit_result_injection` 的固定 delta 封顶对齐,消除平行路径不对称)。
+fn meta_risk_delta(meta_hits: usize) -> i64 {
+    (META_INSTRUCTION_RISK_DELTA * meta_hits as i64).min(META_INSTRUCTION_RISK_DELTA * 3)
+}
 /// hook 写 risk / 建 session 行用的 source 标签前缀(T5c:真实 source,非 bump 兜底 'unknown')。
 /// 形如 `claude-hook` / `codex-hook`,据此让审计能区分 risk 反馈环来自哪个 CLI 的 hook。
 fn hook_source(cli: CliKind) -> String {
@@ -1949,6 +1989,64 @@ fn safe_tool_name(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::posture::PostureProfile;
+
+    #[test]
+    fn meta_risk_delta_caps_per_event_against_dos() {
+        // A-2.3:1-3 命中线性(保留"命中越多越可疑"的有界信号)。
+        assert_eq!(meta_risk_delta(1), 8);
+        assert_eq!(meta_risk_delta(2), 16);
+        assert_eq!(meta_risk_delta(3), 24);
+        // ≥3 命中**封顶 24**(= 升一档阈值):单条恶意工具结果塞任意多元指令短语,
+        // 也无法一次把 session 顶到 High → 防 DoS(平行路径与 MCP 侧固定 delta 对齐)。
+        assert_eq!(meta_risk_delta(4), 24);
+        assert_eq!(meta_risk_delta(100), 24);
+        assert_eq!(meta_risk_delta(10_000), 24);
+        // 0 命中(纯函数边界;实际仅 hits>0 时调用)。
+        assert_eq!(meta_risk_delta(0), 0);
+    }
+
+    #[test]
+    fn is_shell_safe_secret_whitelists_only_safe_chars() {
+        // token/key/hex/base64/jwt/url 常见形态 → safe,可注入。
+        assert!(is_shell_safe_secret("ghp_AbC123-_=.xyz"));
+        assert!(is_shell_safe_secret("sk-1234567890abcdef"));
+        assert!(is_shell_safe_secret("aGVsbG8+d29ybGQ/Zm9v==")); // base64 含 +/=
+        assert!(is_shell_safe_secret("eyJhbG.eyJzdWI.SflKxw")); // jwt 含 .
+        assert!(is_shell_safe_secret("user@host:5432")); // url 含 :@
+        assert!(is_shell_safe_secret("")); // 空值安全(注入空串无害)
+                                           // 白名单外字符 → 拒绝注入(fail-closed)。覆盖 codex 审查指出的黑名单漏洞:
+                                           // 引号逃逸 + 命令注入 + 空白分词 + glob/expansion。
+        for unsafe_v in [
+            "a'b",
+            "a\"b",
+            "a`b",
+            "a$b",
+            "a\\b",
+            "a;b",
+            "a&b",
+            "a|b",
+            "a<b",
+            "a>b",
+            "a(b",
+            "a)b",
+            "two words",
+            "a\tb", // 空白分词(codex 指出)
+            "a*b",
+            "a?b",
+            "a[b",
+            "a]b",
+            "a{b",
+            "a}b",
+            "a~b", // glob/expansion(codex 指出)
+            "a\nb",
+            "a\rb",
+        ] {
+            assert!(
+                !is_shell_safe_secret(unsafe_v),
+                "应拒绝白名单外: {unsafe_v:?}"
+            );
+        }
+    }
     use serde_json::json;
     use std::io::Cursor;
     use std::path::Path;

@@ -8,6 +8,21 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.0-beta.8] — 2026-06-16 — 注入加固(session-risk DoS 封顶 + 边界注入白名单)
+
+结构化项目 review(双路敌意 sub-agent 审计)发现、经 Codex 两轮代码审查确认的两个安全修复。
+
+### 安全
+
+- **session-risk 升档现按单事件封顶**。此前单条被污染/恶意的工具结果可塞**任意多**元指令短语
+  (`delta = 单位 × 命中数`,无上限)→ 单方面把 session 姿态顶到 High,对用户合法 `secret://`
+  占位符工具调用制造拒绝服务。现把单事件 delta 封顶到 24(= 升一档阈值),消除与 MCP 网关已封顶
+  路径的平行不对称。命中数仍进审计、跨事件累加仍正常升档。
+- **执行边界 secret 注入改用字符白名单**。把 `secret://` alias 替换进 shell command 时,resolve
+  出的真值若含 shell 元字符,会逃逸占位符所在引号上下文、触发 glob 或空白分词 → 改写实际执行的
+  命令。现要求真值匹配 `[A-Za-z0-9-_=.+/:@]`(覆盖 token/key/hex/base64/JWT/URL);其余一律
+  fail-closed 拒绝并引导改用环境变量。Codex 审查指出初版黑名单漏 glob/tab/空格 —— 故改用白名单。
+
 ## [v0.2.0-beta.7] — 2026-06-16 — Agent 协作 UX(拦截引导 + effect 覆盖)
 
 帮助编码 agent(Claude Code、Codex)理解 Vigil 作为协作式安全治理层的角色,在被拦截时配合,
