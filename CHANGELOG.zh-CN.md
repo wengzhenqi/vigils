@@ -8,6 +8,19 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.0-beta.9] — 2026-06-16 — 二次传播泄漏加固(非边界工具结果 scrub)
+
+来自同一次结构化项目 review、经 Codex 代码审查确认的安全修复。
+
+### 安全
+
+- **结果再脱敏现覆盖所有 native 工具,不再仅限执行边界**。此前 agent 可用 `Bash` 把注入的
+  secret 落盘,再用 `Read`/`Grep` 等非边界工具读出 —— 而这些工具的结果不被再脱敏,真值二次
+  回流给模型。PostToolUse 再脱敏面现扩到每个 native 工具:边界工具(`Bash`/`shell`)保持对声明
+  secret 真值的完整逆替换;非边界 native 工具只跑硬指纹 scrub(不逐结果解析 secret,避免性能/
+  审计开销)。MCP 工具(`mcp__*`)排除,因其结果 detokenize 由 MCP 网关负责。诚实标注 scope:
+  自定义非硬指纹 secret 经非边界工具读出仍未覆盖 —— 完整覆盖留待 egress 代理。
+
 ## [v0.2.0-beta.8] — 2026-06-16 — 注入加固(session-risk DoS 封顶 + 边界注入白名单)
 
 结构化项目 review(双路敌意 sub-agent 审计)发现、经 Codex 两轮代码审查确认的两个安全修复。

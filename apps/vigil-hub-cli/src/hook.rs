@@ -1439,11 +1439,19 @@ fn try_result_redaction(args: &HookArgs, raw: &Value) -> Option<HookOutcome> {
     if !inj.enabled || !cli_supports_updated_input(args.cli) {
         return None;
     }
-    // 工具名(精确路由);非边界工具的结果不在再脱敏面。
+    // 工具名(精确路由)。#3 二次传播兜底:再脱敏面从"仅边界工具"扩到所有 **native** 工具。
+    // - **边界工具**(Bash/shell):完整再脱敏 —— 解析声明 secret 真值做精确逆替换 + 硬指纹 scrub
+    //   (覆盖本次注入真值的回吐,含自定义 env:/keyring: secret)。
+    // - **非边界 native 工具**(Read/Grep/Edit 等):agent 可把注入真值落盘再用读类工具读出,绕过
+    //   仅覆盖边界工具的旧面 → 跑**硬指纹 scrub**(不解析 secret,避免每个工具结果 mint/resolve
+    //   N 个 secret 的性能/ledger 成本)。覆盖硬指纹形态 secret 的二次传播;自定义 secret 的完整
+    //   覆盖需 egress 代理(留后续)。
+    // - **MCP 工具**(`mcp__*`):result detokenize 由 Vigil MCP 网关负责,hook 不插手(避免双重)。
     let tool_name = extract_str(raw, &["tool_name", "toolName", "tool"])?;
-    if !is_execution_boundary_tool(tool_name) {
+    if tool_name.starts_with("mcp__") {
         return None;
     }
+    let is_boundary = is_execution_boundary_tool(tool_name);
     // 工具执行结果(任意 JSON;Bash 通常是 {stdout, stderr, …} 或字符串)。缺失 → pass-through。
     let tool_response = extract_value(
         raw,
@@ -1457,8 +1465,10 @@ fn try_result_redaction(args: &HookArgs, raw: &Value) -> Option<HookOutcome> {
     // 绑定三元组 (session, hook-native, tool),InjectionMethod::HookCommand。
     // **fail-closed**:声明了 secret 却无法解析(无 ledger / mint / resolve 失败)→ 无法逐字逆向
     // 替换、无法证明结果不含真值 → 整体裁剪(见 [`redact_fail_closed_outcome`])。
+    // 仅**边界工具**解析声明 secret 真值(mint/resolve)做精确逆替换;非边界 native 工具跳过
+    // (resolved 空 → redact_boundary_value 只跑硬指纹 scrub,省每结果 N×mint/resolve 开销)。
     let mut resolved: HashMap<String, SecretValue> = HashMap::new();
-    if !inj.secrets.is_empty() {
+    if is_boundary && !inj.secrets.is_empty() {
         // 真值解析结构上需要 ledger(LeaseBroker 经其审计 mint/resolve)。无 ledger → fail-closed 裁剪。
         let Some(path) = args.ledger_path.as_ref() else {
             eprintln!(
@@ -3545,11 +3555,10 @@ mod tests {
     }
 
     #[test]
-    fn redaction_non_boundary_tool_passes_through() {
-        // 非边界工具(Edit)的结果不在再脱敏面 → Allow。注:这是**显式 scope 限制**而非
-        // "secure by design" —— 边界命令把真值落盘后被非边界工具读出的**二次传播**不被覆盖
-        // (见模块 doc「已知 scope 限制」;完整覆盖需 egress 侧拦截)。此处直接注入的真值不源自
-        // 非边界工具,故 pass-through 与注入路径的边界 scope 对称。
+    fn redaction_non_boundary_nonhard_value_passes_through() {
+        // #3 后非边界 native 工具(Edit)走**硬指纹 scrub**(不解析声明 secret)。此处真值是
+        // 自定义**非硬指纹**形态(FAKE_INJECT_SECRET),scrub 无命中 → pass-through(Allow)。
+        // 自定义 secret 的二次传播完整覆盖需 egress 代理(留后续);硬指纹形态见下一测试。
         let (out, _lp, _td) = run_redaction(
             &[("k", "secret://k/ref")],
             &[("secret://k/ref", FAKE_INJECT_SECRET)],
@@ -3560,6 +3569,43 @@ mod tests {
             true,
         );
         assert_eq!(out, HookOutcome::Allow);
+    }
+
+    #[test]
+    fn redaction_non_boundary_hard_fingerprint_scrubbed() {
+        // #3 二次传播兜底:agent 把真值落盘后用**非边界**读类工具(Read)读出,结果含**硬指纹**
+        // secret → 现被硬指纹 scrub 成 [REDACTED …](旧版非边界工具完全 pass-through 会泄漏)。
+        let (out, _lp, _td) = run_redaction(
+            &[("k", "secret://k/ref")],
+            &[("secret://k/ref", FAKE_INJECT_SECRET)],
+            true,
+            CliKind::Claude,
+            "Read",
+            json!({ "content": format!("cat secrets.txt -> token={HARD_GITHUB_TOKEN}\n") }),
+            true,
+        );
+        let s = redacted_output(&out).to_string();
+        assert!(
+            !s.contains(HARD_GITHUB_TOKEN),
+            "二次传播的硬指纹 secret 必须被 scrub, got: {s}"
+        );
+        assert!(s.contains("REDACTED"), "scrub 占位符 expected, got: {s}");
+    }
+
+    #[test]
+    fn redaction_mcp_tool_passes_through_to_gateway() {
+        // MCP 工具(mcp__*)的 result detokenize 由 Vigil MCP 网关负责,hook 不插手(避免双重处置)。
+        // 即便结果含硬指纹,hook 侧 pass-through(Allow)—— 网关侧覆盖。
+        let (out, _lp, _td) = run_redaction(
+            &[("k", "secret://k/ref")],
+            &[("secret://k/ref", FAKE_INJECT_SECRET)],
+            true,
+            CliKind::Claude,
+            "mcp__github__create_issue",
+            json!({ "body": format!("token={HARD_GITHUB_TOKEN}") }),
+            true,
+        );
+        assert_eq!(out, HookOutcome::Allow, "MCP 工具交网关,hook pass-through");
     }
 
     #[test]

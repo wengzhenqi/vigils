@@ -8,6 +8,22 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.0-beta.9] — 2026-06-16 — Second-hop leak hardening (non-boundary result scrub)
+
+A security fix from the same structured project review, confirmed by Codex code review.
+
+### Security
+
+- **Result re-redaction now covers all native tools, not just the execution boundary.** An agent
+  could previously write an injected secret to disk via `Bash`, then read it back via a
+  non-boundary tool like `Read`/`Grep` whose results were not re-redacted — a second-hop leak to
+  the model. The PostToolUse re-redaction surface now extends to every native tool: boundary tools
+  (`Bash`/`shell`) keep full reverse-substitution of declared secret values; non-boundary native
+  tools run a hard-fingerprint scrub only (no per-result secret resolution, to avoid the
+  performance/ledger cost). MCP tools (`mcp__*`) are excluded because the MCP gateway already owns
+  their result detokenization. Scope is honest: custom non-fingerprint secrets read back through a
+  non-boundary tool are still not covered — full coverage is deferred to an egress proxy.
+
 ## [v0.2.0-beta.8] — 2026-06-16 — Injection hardening (session-risk DoS cap + boundary-injection whitelist)
 
 Two security fixes surfaced by a structured project review (dual adversarial sub-agent audit) and
