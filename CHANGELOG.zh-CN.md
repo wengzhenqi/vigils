@@ -8,6 +8,23 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.0-beta.6] — 2026-06-15 — detokenize 真值回流防护(MCP 网关)
+
+### 修复 —— hook 与 MCP 网关的逆替换对称性
+
+一次对称性审计(经敌意 agent 交叉评审,并抓出了第一版修复的残留缺口)发现两处平行路径缺口,
+MCP 网关落后于 hook 执行边界:
+
+- **HIGH —— detokenize 真值在 tool result 中回流**:当 `secret://<alias>` 被 detokenize 成真实
+  tool 参数、上游工具把该真值回吐进 result 时,MCP 网关此前**只**跑硬指纹脱敏(`detect_hard_secret`)。
+  来自 `env:`/`keyring:` 的自定义 secret 无固定格式,非指纹真值会原样回流给 LLM 且不审计。网关现在
+  对注入真值做**精确逆替换**回 `secret://<alias>`(与 hook 的 `try_result_redaction` 对齐),配
+  **无条件 fail-closed 自检**(真值落 object key 位时整体脱敏),并写零回显审计事件。always-on,
+  独立于 `--redact-tool-results`。
+- **MEDIUM —— result 注入扫描仅 ORT**:上游 result 的提示注入扫描此前被 `--features ort` 门控,
+  默认(非 ORT)构建完全不做 result 注入检测。现改为与 descriptor 扫描同款双检测器(启发式
+  always-on + 可选 DeBERTa)。
+
 ## [v0.2.0-beta.5] — 2026-06-15 — ORT-init 超时对称(privacy filter)
 
 ### 修复 —— ORT-init 超时兜底现覆盖两条模型路径

@@ -8,6 +8,26 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.0-beta.6] — 2026-06-15 — Detokenized-secret reflection guard (MCP gateway)
+
+### Fixed — reverse-substitution symmetry between hook and MCP gateway
+
+A symmetry audit (cross-reviewed by an adversarial agent, which also caught a residual gap in the
+first fix) found two parallel-path gaps where the MCP gateway lagged the hook execution path:
+
+- **HIGH — detokenized secret reflected in tool results**: when a `secret://<alias>` reference is
+  detokenized into real tool arguments and the upstream tool echoes that value back in its result,
+  the MCP gateway previously only ran the hard-fingerprint scrubber (`detect_hard_secret`). Custom
+  secrets from `env:`/`keyring:` have no fixed format, so a non-fingerprint value would flow back to
+  the LLM unredacted and unaudited. The gateway now performs **exact reverse-substitution** of the
+  injected values back to `secret://<alias>` (matching the hook path's `try_result_redaction`), with
+  an **unconditional fail-closed self-check** (a value landing in an object key triggers a full
+  redact), plus a zero-echo audit event. Always-on, independent of `--redact-tool-results`.
+- **MEDIUM — result injection scan was ORT-only**: the upstream-result prompt-injection scan was
+  gated behind `--features ort`, so default (non-ORT) builds did no result-injection detection at
+  all. It now uses the same dual-detector shape as the descriptor scan (always-on heuristic +
+  optional DeBERTa).
+
 ## [v0.2.0-beta.5] — 2026-06-15 — ORT-init timeout symmetry (privacy filter)
 
 ### Fixed — ORT-init timeout guard now covers both model paths

@@ -515,43 +515,67 @@ impl Hub {
     /// caller 流程)。**零回显**:本函数不碰审计,只返概率;sha256 锚点由 caller 负责。
     #[cfg(feature = "ort")]
     fn injection_classify_opt(&self, text: &str) -> Option<f32> {
-        // CPU 放大防护(hostile review LOW):模型本身截断到 512 token,但 tokenizer 仍对全文做
-        // BPE 切分;恶意 upstream 返超大 result 会放大 CPU。注入指令通常在开头(与 injection.rs
-        // 的 512-token 尾部截断同理),故送 tokenizer 前先 cap 到 16KB 前缀。
-        const MAX_BYTES: usize = 16 * 1024;
-
         let classifier = self.injection_classifier.as_ref()?;
         if text.trim().is_empty() {
             return None;
         }
-        // 截到 ≤ MAX_BYTES 的最近 UTF-8 边界(避免切多字节 char 中间 → &str 索引 panic)。
-        let scan = if text.len() > MAX_BYTES {
-            let mut end = MAX_BYTES;
-            while end > 0 && !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            &text[..end]
-        } else {
-            text
-        };
+        // CPU 放大防护(hostile review LOW):模型本身截断到 512 token,但 tokenizer 仍对全文做
+        // BPE 切分;恶意 upstream 返超大 result 会放大 CPU。注入指令通常在开头(与 injection.rs
+        // 的 512-token 尾部截断同理),故送 tokenizer 前先 cap 到 16KB 前缀 —— 与启发式扫描共用
+        // `injection_scan_prefix`(DRY:cap 逻辑 SSOT)。
+        let scan = injection_scan_prefix(text);
         // 软信号:推理失败(tokenize / session.run / shape)静默吞掉,绝不影响 caller 决策流。
         classifier.classify(scan).ok()
     }
 
-    /// P0 注入防护 Slice C:对 upstream tool result **原文**跑 deberta 注入分类,命中阈值则
-    /// bump session risk + 写零回显软信号审计。**绝不** deny / 改写 result(改写仅属凭据脱敏
-    /// 路径)。无 classifier / 空 result / 推理失败 / 未达阈值一律静默返回(软信号 fail-safe)。
-    #[cfg(feature = "ort")]
+    /// P0 注入防护 Slice C:对 upstream tool result 跑**双检测器**注入扫描 —— 启发式元指令正则
+    /// (`scan_meta_instructions`,always-on,无 ort 依赖)+ DeBERTa 序列分类(`--features ort` +
+    /// warm session 时)。任一命中即 bump session risk(两层取 max 不累加)+ 写**零回显**软信号
+    /// 审计。**绝不** deny / 改写 result(改写仅属凭据脱敏路径)。
+    ///
+    /// **对称性审计 MEDIUM-1 修复**:此前本函数整体 `#[cfg(feature="ort")]`、只有 DeBERTa 一层,
+    /// 主流**非-ort 构建**(默认特性,绝大多数发行二进制不带 738MB 模型)下 result 注入获得零检测
+    /// —— 而 descriptor 扫描(`audit_descriptor_meta_instructions`)与 hook tool-output 路径都有
+    /// 启发式 always-on 兜底。改为与 descriptor 扫描**同款双检测器结构**,补齐这条平行扫描点的
+    /// 不对称缺口。
     fn audit_result_injection(&self, invocation: &ToolInvocation, result_text: &str) {
-        let Some(score) = self.injection_classify_opt(result_text) else {
-            return;
-        };
-        if score < INJECTION_CLASSIFIER_THRESHOLD {
+        // CPU 放大防护:启发式正则 + tokenizer 都对全文 O(n);注入指令通常在开头 → cap 16KB 前缀。
+        let scan = injection_scan_prefix(result_text);
+
+        // 检测器 1:启发式元指令正则(always-on,确定性、窄覆盖)。
+        let heuristic_hits = vigil_redaction::scan_meta_instructions(scan).len();
+        // 检测器 2:DeBERTa(feature gate;无 ort 恒 None → 退化为纯启发式,与 descriptor 扫描一致)。
+        #[cfg(feature = "ort")]
+        let deberta_score = self.injection_classify_opt(result_text);
+        #[cfg(not(feature = "ort"))]
+        let deberta_score: Option<f32> = None;
+        let deberta_hit = matches!(deberta_score, Some(s) if s >= INJECTION_CLASSIFIER_THRESHOLD);
+
+        // 两检测器都未命中 → 静默(软信号 fail-safe;常态零噪声)。
+        if heuristic_hits == 0 && !deberta_hit {
             return;
         }
-        let _ = self
-            .ledger
-            .bump_session_risk(&invocation.session_id, INJECTION_CLASSIFIER_RISK_DELTA);
+
+        // 软信号 risk delta:两层针对**同一段 result**,取 max 不累加(对齐 descriptor 扫描)。
+        let risk_delta = {
+            let h = if heuristic_hits > 0 {
+                vigil_redaction::META_INSTRUCTION_RISK_DELTA as i64
+            } else {
+                0
+            };
+            let d = if deberta_hit {
+                INJECTION_CLASSIFIER_RISK_DELTA
+            } else {
+                0
+            };
+            h.max(d)
+        };
+
+        if risk_delta > 0 {
+            let _ = self
+                .ledger
+                .bump_session_risk(&invocation.session_id, risk_delta);
+        }
         let _ = self.ledger.append_event(
             &invocation.session_id,
             "tool_result.injection_suspected",
@@ -559,15 +583,17 @@ impl Hub {
                 "invocation_id": invocation.invocation_id,
                 "server_id": invocation.server_id,
                 "tool_name": invocation.tool_name,
-                // 零回显:deberta 概率(2 位)+ result sha 前缀,绝不带 result 原文。
-                "deberta_score": round2(score),
-                "risk_delta": INJECTION_CLASSIFIER_RISK_DELTA,
+                // 零回显:启发式命中数 + deberta 概率(2 位)/命中 + result sha 前缀,绝不带原文。
+                "heuristic_hits": heuristic_hits,
+                "deberta_score": deberta_score.map(round2),
+                "deberta_hit": deberta_hit,
+                "risk_delta": risk_delta,
                 "signal": "soft",
-                "result_sha256_prefix": sha256_hex_prefix(result_text),
+                "result_sha256_prefix": sha256_hex_prefix(scan),
             }),
             Some(&format!(
-                "result_injection_suspected server:{} tool:{} score:{:.2}",
-                invocation.server_id, invocation.tool_name, score
+                "result_injection_suspected server:{} tool:{} heuristic:{} deberta_hit:{}",
+                invocation.server_id, invocation.tool_name, heuristic_hits, deberta_hit
             )),
         );
     }
@@ -1418,21 +1444,26 @@ impl Hub {
         // 失败(理论=TOCTOU/逻辑 bug;alias map 构造后不可变,无 setter)仍 **fail-closed** —— 绝不
         // 透传字面 `secret://...` 或裸值给上游。**放在 span 创建之前**:失败时不留半截"已 decided
         // 未 executed"的 span。
-        let detok_args =
-            match detokenize_alias_refs(&invocation.args, &route.server_id, &self.secret_aliases) {
-                Ok(a) => a,
-                Err(alias_err) => {
-                    // 同上:approved outbox 在 alias 边界失败早返时也须 finalize 防悬挂。
-                    if let Some(oid) = &outbox_id {
-                        let _ = self.ledger.mark_outbox_failed(oid);
-                    }
-                    return Ok(Some(req.error(
-                        JsonRpcError::VIGIL_DENIED,
-                        "secret:// alias resolution failed at tool boundary",
-                        Some(json!({ "reason": alias_err.reason() })),
-                    )));
+        let mut injected: Vec<(String, String)> = Vec::new();
+        let detok_args = match detokenize_alias_refs(
+            &invocation.args,
+            &route.server_id,
+            &self.secret_aliases,
+            &mut injected,
+        ) {
+            Ok(a) => a,
+            Err(alias_err) => {
+                // 同上:approved outbox 在 alias 边界失败早返时也须 finalize 防悬挂。
+                if let Some(oid) = &outbox_id {
+                    let _ = self.ledger.mark_outbox_failed(oid);
                 }
-            };
+                return Ok(Some(req.error(
+                    JsonRpcError::VIGIL_DENIED,
+                    "secret:// alias resolution failed at tool boundary",
+                    Some(json!({ "reason": alias_err.reason() })),
+                )));
+            }
+        };
 
         // ToolCallSpan 三段式(opened → decided → executed/execute_failed)
         let span = self
@@ -1457,6 +1488,40 @@ impl Hub {
                 // `redact_tool_results` 开启时升级为 **in-band**:命中硬指纹即对 result 做 `redact` 后
                 // 再返回 agent/LLM,堵住工具输出把 secret 回吐给远端 LLM(round-trip 的"结果再脱敏"半边)。
                 let mut result = result;
+                // HIGH-1(对称性审计):精确逆替换本次 detokenize 注入的真值(回 secret://alias)。
+                // 这是与 hook `try_result_redaction` 对齐的**主**捕获手段 —— 注入的自定义 secret
+                // (env:/keyring: 来源,无格式约束)未必匹配硬指纹,下面的 detect_hard_secret 抓不到;
+                // 唯有按已知真值精确 find-replace 才可靠。**always-on**(独立于 redact_tool_results:
+                // 收回我们自己注入的真值是必做、非可选)。fail-closed:逆替换后仍残留 → 整体占位。
+                if !injected.is_empty() {
+                    // HIGH-1:精确逆替换 value 位真值 + **无条件** fail-closed 自检(覆盖 key 位)。
+                    // 封装进 `redact_injected_reflection`,让占位决策可被单测直接守门
+                    // (production-logic-testable:不让 reverse_hits 门控藏在此处 —— hostile
+                    // review HIGH:key-only 注入真值 reverse_hits=0,自检若被 reverse_hits 门控则漏)。
+                    let (reverse_hits, fail_closed) =
+                        redact_injected_reflection(&mut result, &injected);
+                    if reverse_hits > 0 || fail_closed {
+                        self.leak_detected_count.fetch_add(1, Ordering::Relaxed);
+                        // 零回显审计:命中数 + 是否 fail-closed,**绝不**带真值 / alias body。
+                        let _ = self.ledger.append_event(
+                            &invocation.session_id,
+                            EVENT_SECRET_LEAK_DETECTED,
+                            &json!({
+                                "kind": "injected_secret_reflected",
+                                "invocation_id": invocation.invocation_id,
+                                "server_id": invocation.server_id,
+                                "tool_name": invocation.tool_name,
+                                "decision_id": decision.decision_id,
+                                "reverse_hits": reverse_hits,
+                                "fail_closed": fail_closed,
+                            }),
+                            Some(
+                                "injected secret reflected in tool result; \
+                                 reverse-substituted to secret://alias",
+                            ),
+                        );
+                    }
+                }
                 if let Ok(result_text) = serde_jcs::to_string(&result) {
                     if let Some(rule) = vigil_redaction::detect_hard_secret(&result_text) {
                         self.leak_detected_count.fetch_add(1, Ordering::Relaxed);
@@ -1489,10 +1554,10 @@ impl Hub {
                         }
                     }
 
-                    // P0 注入防护 Slice C:对 upstream result **原文**跑 deberta 注入分类(软信号)。
-                    // 远端 MCP 工具结果可能携带"投毒指令"诱导 agent;命中只 bump risk + 审计,
-                    // **绝不** deny / 改写 result(改写仅属上面的凭据脱敏路径;注入是软信号)。
-                    #[cfg(feature = "ort")]
+                    // P0 注入防护:对 upstream result 跑**双检测器**注入扫描(启发式 always-on +
+                    // DeBERTa ort-gate;软信号)。远端 MCP 工具结果可能携带"投毒指令"诱导 agent;
+                    // 命中只 bump risk + 审计,**绝不** deny / 改写 result(改写仅属上面的凭据脱敏
+                    // 路径;注入是软信号)。MEDIUM-1:移除 cfg gate,非-ort 构建仍跑启发式兜底。
                     self.audit_result_injection(invocation, &result_text);
                 }
 
@@ -1520,6 +1585,22 @@ impl Hub {
             }
         }
     }
+}
+
+/// 注入扫描前缀 cap:大 result 限 CPU —— 启发式正则 + DeBERTa tokenizer 都对全文 O(n);注入
+/// 指令通常在开头(与 injection.rs 512-token 截断同理),故 cap 到 16KB 前缀。截到最近 UTF-8
+/// 边界避免切多字节 char(→ `&str` 索引 panic)。启发式扫描与 `injection_classify_opt` 共用
+/// (cap 逻辑 SSOT)。
+fn injection_scan_prefix(text: &str) -> &str {
+    const MAX_BYTES: usize = 16 * 1024;
+    if text.len() <= MAX_BYTES {
+        return text;
+    }
+    let mut end = MAX_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 /// 对文本取 sha256 hex 前 16 字符作**零回显**定位锚点(审计里替代原文,供 replay 定位投毒
@@ -1826,6 +1907,11 @@ fn detokenize_alias_refs(
     args: &Value,
     server_id: &str,
     aliases: &SecretAliasMap,
+    // HIGH-1(对称性审计):收集本次实际 expose 的 (alias, 真值),供 `invoke_upstream` 在 result
+    // 侧**精确逆替换**(真值回吐检测)。注入路径与"结果再脱敏"路径共用同一真值集合 —— 对齐 hook
+    // `try_result_redaction`:自定义 secret(env:/keyring: 无格式约束)未必匹配硬指纹,精确逆替换
+    // 是唯一可靠捕获手段。
+    injected: &mut Vec<(String, String)>,
 ) -> Result<Value, AliasResolveError> {
     match args {
         Value::String(s) => {
@@ -1835,7 +1921,10 @@ fn detokenize_alias_refs(
                     AliasPiece::Literal(text) => out.push_str(text),
                     // 唯一 expose 点
                     AliasPiece::Token(alias) => {
-                        out.push_str(aliases.resolve(alias, server_id)?.expose());
+                        let value = aliases.resolve(alias, server_id)?;
+                        let exposed = value.expose();
+                        out.push_str(exposed);
+                        injected.push((alias.to_string(), exposed.to_string()));
                     }
                 }
                 Ok(())
@@ -1845,7 +1934,7 @@ fn detokenize_alias_refs(
         Value::Array(arr) => {
             let mut out = Vec::with_capacity(arr.len());
             for item in arr {
-                out.push(detokenize_alias_refs(item, server_id, aliases)?);
+                out.push(detokenize_alias_refs(item, server_id, aliases, injected)?);
             }
             Ok(Value::Array(out))
         }
@@ -1855,13 +1944,79 @@ fn detokenize_alias_refs(
                 if k.contains("secret://") {
                     return Err(AliasResolveError::KeyPosition);
                 }
-                out.insert(k.clone(), detokenize_alias_refs(val, server_id, aliases)?);
+                out.insert(
+                    k.clone(),
+                    detokenize_alias_refs(val, server_id, aliases, injected)?,
+                );
             }
             Ok(Value::Object(out))
         }
         // 数字/布尔/null:原样克隆
         other => Ok(other.clone()),
     }
+}
+
+/// HIGH-1(对称性审计):递归把 tool result 里出现的"本次注入真值"精确替换回 `secret://<alias>`。
+/// 与 hook `redact_boundary_value` 同款语义(字符串叶子 find-replace);`hits` 累加替换次数。
+/// **不改写 object key**(key 位真值由 [`value_contains_injected`] 自检兜底 → fail-closed)。
+fn reverse_substitute_injected(v: &mut Value, injected: &[(String, String)], hits: &mut usize) {
+    match v {
+        Value::String(s) => {
+            for (alias, real) in injected {
+                if real.is_empty() || !s.contains(real.as_str()) {
+                    continue;
+                }
+                *hits += s.matches(real.as_str()).count();
+                *s = s.replace(real.as_str(), &format!("secret://{alias}"));
+            }
+        }
+        Value::Array(arr) => arr
+            .iter_mut()
+            .for_each(|x| reverse_substitute_injected(x, injected, hits)),
+        Value::Object(map) => map
+            .iter_mut()
+            .for_each(|(_, val)| reverse_substitute_injected(val, injected, hits)),
+        _ => {}
+    }
+}
+
+/// HIGH-1 fail-closed 自检:result 任意字符串叶子 / object key 是否仍残留某个注入真值(逆替换
+/// 边角遗漏,如真值落 key 位)。**语义层**比较,对含 JSON 特殊字符的真值同样精确。
+fn value_contains_injected(v: &Value, injected: &[(String, String)]) -> bool {
+    let has = |s: &str| {
+        injected
+            .iter()
+            .any(|(_, real)| !real.is_empty() && s.contains(real.as_str()))
+    };
+    match v {
+        Value::String(s) => has(s),
+        Value::Array(arr) => arr.iter().any(|x| value_contains_injected(x, injected)),
+        Value::Object(map) => map
+            .iter()
+            .any(|(k, val)| has(k) || value_contains_injected(val, injected)),
+        _ => false,
+    }
+}
+
+/// HIGH-1(对称性审计):对 tool result 收回本次 detokenize 注入的真值 —— 精确逆替换 string
+/// **value** 位真值 → `secret://<alias>`,再**无条件**跑 fail-closed 自检(`value_contains_injected`
+/// 覆盖 key+value+array,是 reverse_hits 的超集);若仍残留(典型:真值落 object **key** 位,
+/// reverse 不改 key)→ result 整体占位。返回 `(reverse_hits, fail_closed)` 供 caller 审计。
+///
+/// **抽纯函数的理由**(production-logic-testable):占位决策不能门控在 caller 的 `reverse_hits>0`
+/// 里 —— key-only 注入真值 reverse_hits=0 会漏占位(hostile review HIGH)。封装让生产路径与单测
+/// 调同一逻辑,杜绝"测试绕过门控掩盖缺口"。
+fn redact_injected_reflection(result: &mut Value, injected: &[(String, String)]) -> (usize, bool) {
+    let mut reverse_hits = 0usize;
+    reverse_substitute_injected(result, injected, &mut reverse_hits);
+    // **无条件**自检(不被 reverse_hits 门控):value 位真值已逆替换、key 位真值仍在 → 检出残留。
+    let fail_closed = value_contains_injected(result, injected);
+    if fail_closed {
+        *result = json!({
+            "vigil_redacted": "[REDACTED: detokenized secret reflected in tool result]"
+        });
+    }
+    (reverse_hits, fail_closed)
 }
 
 /// 计算 stdio server argv 的规范化 hash(JCS 后 SHA-256 hex-lower)。
@@ -1891,6 +2046,88 @@ mod tests {
             params: None,
         };
         assert!(!req.is_notification());
+    }
+
+    // ------------------------------------------------------------------
+    // HIGH-1(对称性审计):detokenize 真值回流 —— result 精确逆替换守门。
+    // 核心洞:注入的自定义 secret(env:/keyring: 无格式约束)不匹配硬指纹,
+    // detect_hard_secret 抓不到,唯有按已知真值精确逆替换才可靠收回。
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn reverse_substitute_replaces_injected_nonhardfingerprint_value() {
+        // 非硬指纹真值(自定义 deploy token)被上游回吐 → 必须逆替换回 secret://alias。
+        let injected = vec![(
+            "deploy_key".to_string(),
+            "xQ7-internal-deploy-9z".to_string(),
+        )];
+        let mut result = json!({
+            "stdout": "deployed with key xQ7-internal-deploy-9z to prod",
+            "nested": ["xQ7-internal-deploy-9z"],
+        });
+        let mut hits = 0usize;
+        reverse_substitute_injected(&mut result, &injected, &mut hits);
+        assert_eq!(hits, 2, "string 叶子 + array 元素各 1 次命中");
+        let s = serde_json::to_string(&result).unwrap();
+        assert!(!s.contains("xQ7-internal-deploy-9z"), "真值绝不得残留: {s}");
+        assert!(s.contains("secret://deploy_key"), "应逆替换回占位符: {s}");
+        assert!(
+            !value_contains_injected(&result, &injected),
+            "逆替换后自检应无残留"
+        );
+    }
+
+    #[test]
+    fn redact_injected_reflection_failcloses_on_key_position() {
+        // hostile review HIGH 守门:真值只落 object **key** 位(reverse_hits=0),生产封装
+        // `redact_injected_reflection` 必须仍 fail-closed 整体占位 —— 直接测生产逻辑,不绕过
+        // `reverse_hits>0` 门控(此前测试绕门控、掩盖了 key-only 注入真值漏占位的缺口)。
+        let injected = vec![("tok".to_string(), "secretval42".to_string())];
+        let mut result = json!({ "secretval42": "v" });
+        let (hits, fail_closed) = redact_injected_reflection(&mut result, &injected);
+        assert_eq!(hits, 0, "key 位无 string-value 命中 → reverse_hits=0");
+        assert!(
+            fail_closed,
+            "key 位真值必须触发 fail-closed(而非被 reverse_hits 门控漏过)"
+        );
+        assert_eq!(
+            result,
+            json!({ "vigil_redacted": "[REDACTED: detokenized secret reflected in tool result]" }),
+            "fail-closed 必须整体占位"
+        );
+        assert!(
+            !value_contains_injected(&result, &injected),
+            "占位后绝无残留真值"
+        );
+    }
+
+    #[test]
+    fn redact_injected_reflection_substitutes_value_position() {
+        // value 位真值:逆替换回 secret://alias(reverse_hits>0)、无残留 → 不 fail-closed。
+        let injected = vec![(
+            "deploy_key".to_string(),
+            "xQ7-internal-deploy-9z".to_string(),
+        )];
+        let mut result = json!({ "stdout": "exported KEY=xQ7-internal-deploy-9z ok" });
+        let (hits, fail_closed) = redact_injected_reflection(&mut result, &injected);
+        assert_eq!(hits, 1);
+        assert!(!fail_closed, "value 位逆替换干净,不应 fail-closed");
+        let s = serde_json::to_string(&result).unwrap();
+        assert!(!s.contains("xQ7-internal-deploy-9z"), "真值不得残留: {s}");
+        assert!(s.contains("secret://deploy_key"), "应逆替换回占位符: {s}");
+    }
+
+    #[test]
+    fn reverse_substitute_noop_when_result_clean() {
+        // 常态:result 不含任何注入真值 → hits=0、result 不变(零噪声)。
+        let injected = vec![("tok".to_string(), "abc123xyz".to_string())];
+        let mut result = json!({ "stdout": "clean output, no secrets here" });
+        let before = result.clone();
+        let mut hits = 0usize;
+        reverse_substitute_injected(&mut result, &injected, &mut hits);
+        assert_eq!(hits, 0);
+        assert_eq!(result, before, "无命中时 result 不应改变");
+        assert!(!value_contains_injected(&result, &injected));
     }
 
     // ------------------------------------------------------------------
