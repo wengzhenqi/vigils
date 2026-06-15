@@ -8,6 +8,28 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.0-beta.7] — 2026-06-16 — Agent 协作 UX(拦截引导 + effect 覆盖)
+
+帮助编码 agent(Claude Code、Codex)理解 Vigil 作为协作式安全治理层的角色,在被拦截时配合,
+而非通过换工具、换路径、拆请求来绕过拦截。
+
+### 新增
+
+- **治理 preamble** 注入 MCP `initialize.instructions` 通道(≤512 字节,Codex/Claude Code
+  消费):把拦截定性为**终态**策略决定(非可重试错误),引导 agent 向用户报告或在 Vigil 请求
+  批准,而非绕过。丢弃 `instructions` 的客户端(web/SDK)由下方拦截消息兜底。
+- **终态拦截引导**:firewall 拦截消息与 hook 拦截消息(裸 secret、占位符)现在明确告知
+  "等价绕过(换工具/换路径、拆请求)同样会被拒",唯一正确路径是在 Vigil 请求用户批准。
+- **更广的 effect 覆盖**:扩展 `is_write_call` 与 path / URL / shell 字段名词表(如
+  `remove`/`truncate`/`save`、`filename`/`folder`、`webhook_url`/`cmd`),让命名陌生的第三方
+  工具也能被正确分类(Fs/Net/Exec),而非落到 default-deny floor。floor 行为本身不变。
+
+### 安全
+
+- firewall 拦截响应**不再向模型回显内部判定理由**。这些理由可能含请求派生的文件路径与主机名
+  (一种 causality laundering 侧信道,让模型借此探测覆盖边界);现在只留在审计账本。enforcement
+  行为未变 —— 所有拦截仍是确定性 fail-closed。经敌意 sub-agent 与 Codex 双路独立评审。
+
 ## [v0.2.0-beta.6] — 2026-06-15 — detokenize 真值回流防护(MCP 网关)
 
 ### 修复 —— hook 与 MCP 网关的逆替换对称性

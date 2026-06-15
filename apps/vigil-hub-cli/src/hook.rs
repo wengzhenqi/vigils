@@ -556,9 +556,11 @@ pub fn run<R: Read>(args: &HookArgs, stdin: &mut R) -> HookOutcome {
         audit_deny(args, &input, "raw_secret", raw_finding, &serialized);
         return HookOutcome::Deny(format!(
             "Vigil blocked tool `{tool}`: a raw {kind} credential was detected in the tool input. \
-             Never put real secrets in tool calls. Declare it as a Vigil secret alias and reference \
-             `secret://<alias>` so the real value is injected only at the execution boundary and is \
-             never exposed to the model or the audit log.",
+             This is a FINAL security decision, not a retryable error — switching tools, splitting \
+             the value, or rephrasing will be blocked the same way. Never put real secrets in tool \
+             calls: declare it as a Vigil secret alias and reference `secret://<alias>` so the real \
+             value is injected only at the execution boundary, never exposed to the model or the \
+             audit log. If this credential is legitimate, tell the user to declare the alias in Vigil.",
             tool = tool_display,
             kind = kind,
         ));
@@ -603,9 +605,10 @@ pub fn run<R: Read>(args: &HookArgs, stdin: &mut R) -> HookOutcome {
                 audit_deny(args, &input, "placeholder", None, &serialized);
                 HookOutcome::Deny(format!(
                     "Vigil blocked tool `{tool}`: it carries a `secret://`/`vigil://` placeholder, \
-                     but hook-boundary substitution is not yet enabled for native tools \
-                     (posture: {p}). Blocked fail-closed to avoid executing an unresolved \
-                     placeholder.",
+                     but hook-boundary substitution is not enabled for native tools at this posture \
+                     ({p}). Blocked fail-closed to avoid executing an unresolved placeholder. This \
+                     is a FINAL policy decision — do not retry or switch tools; ask the user to \
+                     adjust Vigil's posture or approve the action in Vigil if they want it to proceed.",
                     tool = tool_display,
                     p = eff.as_str(),
                 ))

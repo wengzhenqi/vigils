@@ -106,6 +106,18 @@ fn initialize_creates_session_and_exposes_server_info() {
     let result = resp.result.as_ref().unwrap();
     assert_eq!(result["serverInfo"]["name"], "vigil-hub");
     assert_eq!(result["protocolVersion"], "2025-06-18");
+    // L1.1:initialize 必须注入治理 preamble(Codex / Claude Code 消费,引导 agent 配合)。
+    let instructions = result["instructions"]
+        .as_str()
+        .expect("initialize 响应须含 instructions 字段");
+    assert!(
+        instructions.contains("FINAL") && instructions.contains("Vigil"),
+        "instructions 须含协作契约核心(终态 + Vigil 角色)"
+    );
+    assert!(
+        instructions.len() <= 512,
+        "instructions 须 ≤512 字节(Codex 前 512 自包含约束)"
+    );
 }
 
 #[test]

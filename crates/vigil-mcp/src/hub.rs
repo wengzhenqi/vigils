@@ -35,6 +35,18 @@ use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use crate::stdio::{resolve_program, StdioError, StdioUpstream};
 use crate::upstream::{McpUpstream, UpstreamError};
 
+/// MCP `initialize` 响应注入的治理 preamble(L1 沟通层,docs/strategy/2026-06-15)。
+/// Codex / Claude Code 消费,**前 512 字符自包含**(Codex 约束)→ 协作契约硬核前置;
+/// 塑造 agent 先验:Vigil 是协作安全治理层、deny 是终态而非可重试错误,绝不靠换工具 /
+/// 换路径 / 拆请求绕过。纯文案,**不削弱任何 enforcement**(硬拦截始终在确定性层)。
+const VIGIL_GOVERNANCE_PREAMBLE: &str = "Vigil is a collaborative local security control plane that governs and audits tool calls on the user's behalf. A denial is not a broken tool or an adversary: a Vigil denial or approval request is a FINAL policy decision, not a transient error. Do not retry, switch tools, change paths, or split the request to bypass it; equivalent attempts are denied too. Instead, stop, tell the user what was blocked and why, and ask them to approve it in Vigil to proceed. Vigil shares your goal: the user's safety.";
+
+/// firewall deny 返给模型的终态引导措辞(L1.2)。替换机械 "denied by firewall":
+/// 标 FINAL + 声明等价绕过同样被拒 + 唯一动作 = 报告用户 / 请求批准。
+/// **不回显内部判定细节**(causality laundering;对齐 untrusted-input-not-in-errors):
+/// 精确 reason(越界路径 / 未知 host 等动态拼接)只进审计链,绝不进给模型的 message/data。
+const VIGIL_DENY_GUIDANCE: &str = "Denied by Vigil security policy: a FINAL governance decision, not a retryable error. Retrying, switching tools or paths, or splitting the request will be denied the same way. Tell the user what was blocked and why; if they want to proceed, ask them to approve it in Vigil.";
+
 /// Hub 错误。
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -925,7 +937,10 @@ impl Hub {
             "serverInfo": {
                 "name": "vigil-hub",
                 "version": env!("CARGO_PKG_VERSION"),
-            }
+            },
+            // L1.1:治理 preamble 注入 system prompt 先验(Codex / Claude Code 消费;
+            // web/SDK/subagent 会丢弃 → 由每次 deny message 兜底)。纯加性,零 enforcement 影响。
+            "instructions": VIGIL_GOVERNANCE_PREAMBLE
         }))))
     }
 
@@ -1271,12 +1286,15 @@ impl Hub {
                         .record_decision(&session_id, &dec, &EffectVector::default())?;
                     return self.invoke_upstream(req, &invocation, &route, None, dec);
                 }
+                // L1.2:终态引导措辞替换机械 "denied by firewall";data **移除 `reasons`**
+                // —— 精确判定理由(越界路径 / 未知 host 等动态拼接,scorer.rs)是 causality
+                // laundering 侧信道(模型据此探测覆盖边界),只随 DecisionRecord 进审计链,
+                // 绝不回显给模型。保留 decision_id/policy_ids/risk_score:供程序消费,非不可信原文。
                 Ok(Some(req.error(
                     JsonRpcError::VIGIL_DENIED,
-                    "denied by firewall",
+                    VIGIL_DENY_GUIDANCE,
                     Some(json!({
                         "decision_id": decision.decision_id,
-                        "reasons": decision.reasons,
                         "policy_ids": decision.policy_ids,
                         "risk_score": decision.risk_score,
                     })),
@@ -2046,6 +2064,33 @@ mod tests {
             params: None,
         };
         assert!(!req.is_notification());
+    }
+
+    #[test]
+    fn governance_preamble_self_contained_within_codex_512_budget() {
+        // Codex 约束:server instructions 前 512 字符自包含。整段须 ≤512 字节,
+        // 且协作契约核心词都在其中(防未来编辑稀释先验)。
+        assert!(
+            VIGIL_GOVERNANCE_PREAMBLE.len() <= 512,
+            "preamble {} 字节超 Codex 512 预算",
+            VIGIL_GOVERNANCE_PREAMBLE.len()
+        );
+        for kw in ["FINAL", "Do not retry", "approve it in Vigil"] {
+            assert!(
+                VIGIL_GOVERNANCE_PREAMBLE.contains(kw),
+                "preamble 必须含协作契约核心词: {kw}"
+            );
+        }
+    }
+
+    #[test]
+    fn deny_guidance_is_terminal_and_leaks_no_internal_detail() {
+        // L1.2:deny 措辞标 FINAL + 引导报告用户;不得含 scorer 动态 reason 特征词
+        // (causality laundering 防回归:越界路径 / 未知 host 等只进审计,不进给模型措辞)。
+        assert!(VIGIL_DENY_GUIDANCE.contains("FINAL"));
+        assert!(VIGIL_DENY_GUIDANCE.contains("approve it in Vigil"));
+        assert!(!VIGIL_DENY_GUIDANCE.contains("OUTSIDE"));
+        assert!(!VIGIL_DENY_GUIDANCE.contains("host"));
     }
 
     // ------------------------------------------------------------------

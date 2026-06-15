@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(ok.id, Value::String("abc".into()));
         assert!(ok.error.is_none());
 
-        let err = req.error(JsonRpcError::VIGIL_DENIED, "denied by firewall", None);
+        let err = req.error(JsonRpcError::VIGIL_DENIED, "test denial", None);
         assert!(err.result.is_none());
         assert_eq!(err.error.as_ref().unwrap().code, 32001);
     }

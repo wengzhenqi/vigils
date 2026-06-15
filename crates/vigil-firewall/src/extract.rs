@@ -49,15 +49,23 @@ impl PathExtractor {
     fn collect_paths(&self, args: &Value) -> Vec<String> {
         let mut out = Vec::new();
         const KEYS: &[&str] = &[
+            // L2.1 强化:扩展常见路径字段别名,让用非标准字段名的陌生工具也能被识别
+            // 出 FsRead/FsWrite(否则提取不到 path → 落 default-deny floor → 缺口)。
             "path",
             "paths",
             "file",
             "files",
+            "filename",
+            "filepath",
             "src",
             "source",
             "dst",
+            "dest",
             "destination",
             "target",
+            "dir",
+            "directory",
+            "folder",
             "input",
             "output",
         ];
@@ -96,8 +104,26 @@ impl PathExtractor {
 fn is_write_call(tool_name: &str) -> bool {
     let lower = tool_name.to_ascii_lowercase();
     for kw in [
-        "write", "create", "edit", "patch", "delete", "unlink", "rm", "move", "rename", "append",
-        "chmod", "chown", "mkdir",
+        // L2.1(agent-cooperation 覆盖层):扩同义词,缩小"陌生命名工具提取不出 effect
+        // → 落 floor"的面。避开高误报子串(如 "put" 会命中 input/output/compute)。
+        "write",
+        "create",
+        "edit",
+        "patch",
+        "delete",
+        "unlink",
+        "rm",
+        "move",
+        "rename",
+        "append",
+        "chmod",
+        "chown",
+        "mkdir",
+        "remove",
+        "truncate",
+        "overwrite",
+        "save",
+        "upload",
     ] {
         if lower.contains(kw) {
             return true;
@@ -138,7 +164,17 @@ impl EffectExtractor for UrlExtractor {
 
     fn extract(&self, call: &ToolInvocation, out: &mut EffectVector) {
         let mut hosts = Vec::new();
-        for k in ["url", "endpoint", "uri"] {
+        // L2.1 强化:扩展出站 URL 字段别名(webhook/callback 是数据外泄高发字段)。
+        for k in [
+            "url",
+            "endpoint",
+            "uri",
+            "href",
+            "link",
+            "webhook",
+            "webhook_url",
+            "callback_url",
+        ] {
             if let Some(Value::String(s)) = call.args.get(k) {
                 if let Ok(u) = Url::parse(s) {
                     if let Some(h) = u.host_str() {
@@ -281,7 +317,7 @@ impl EffectExtractor for ShellExtractor {
             a.iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
-        } else if let Some(Value::String(s)) = call.args.get("command") {
+        } else if let Some(Value::String(s)) = call.args.get("command").or(call.args.get("cmd")) {
             // shlex 分词;分词失败按含 metachar 处理
             match shlex::split(s) {
                 Some(v) if !v.is_empty() => v,
@@ -520,6 +556,65 @@ mod tests {
             descriptor_hash: "hash".into(),
             requested_at: 0,
         }
+    }
+
+    #[test]
+    fn is_write_call_recognizes_l2_synonyms() {
+        // L2.1(agent-cooperation):新增同义词必须被识别为写,缩小"陌生命名工具
+        // 提取不出 effect → 落 default-deny floor"的覆盖面。
+        for name in [
+            "remove_file",
+            "truncate_log",
+            "overwrite_blob",
+            "save_document",
+            "upload_asset",
+        ] {
+            assert!(is_write_call(name), "`{name}` 应被识别为写调用");
+        }
+        // 边界:不含写关键词的只读名不被误判(锚定扩词不过度,避免高误报子串)。
+        assert!(!is_write_call("get_status"));
+        assert!(!is_write_call("list_items"));
+        assert!(!is_write_call("fetch_url"));
+    }
+
+    #[test]
+    fn extractors_recognize_l2_extended_field_names() {
+        // L2.1 强化:扩展字段名词表,让用非标准字段名的陌生工具也被正确分类 effect,
+        // 缩小"提取不出 effect → 落 default-deny floor"的覆盖缺口(floor 行为不变,纯加性)。
+        // FsWrite via 新路径字段 folder(无标准 path/file)。
+        let e = PathExtractor::new(vec![PathBuf::from("/proj")]);
+        let mut ev = EffectVector::default();
+        e.extract(
+            &mk_call("save_blob", json!({"folder": "out/data"})),
+            &mut ev,
+        );
+        assert!(
+            ev.effects.contains(&EffectKind::FsWrite),
+            "folder 字段 + save 工具名 → FsWrite"
+        );
+
+        // NetOutbound via webhook_url 字段。
+        let mut ev = EffectVector::default();
+        UrlExtractor.extract(
+            &mk_call(
+                "post_event",
+                json!({"webhook_url": "https://hooks.example.com/x"}),
+            ),
+            &mut ev,
+        );
+        assert!(
+            ev.effects.contains(&EffectKind::NetOutbound),
+            "webhook_url 字段 → NetOutbound"
+        );
+        assert!(ev.network_hosts.iter().any(|h| h == "hooks.example.com"));
+
+        // ExecNative via cmd 字段(command 同义)。
+        let mut ev = EffectVector::default();
+        ShellExtractor.extract(&mk_call("run_tool", json!({"cmd": "ls -la"})), &mut ev);
+        assert!(
+            ev.effects.contains(&EffectKind::ExecNative),
+            "cmd 字段 → ExecNative"
+        );
     }
 
     #[test]

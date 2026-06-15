@@ -8,6 +8,34 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.0-beta.7] — 2026-06-16 — Agent cooperation UX (denial guidance + effect coverage)
+
+Helps coding agents (Claude Code, Codex) understand Vigil's role as a collaborative security
+governance layer and cooperate when blocked, instead of working around denials by switching
+tools, changing paths, or splitting requests.
+
+### Added
+
+- **Governance preamble** injected into the MCP `initialize.instructions` channel (≤512 bytes,
+  consumed by Codex/Claude Code): frames a denial as a FINAL policy decision — not a retryable
+  error — and directs the agent to report to the user or request approval in Vigil rather than
+  circumvent it. Clients that drop `instructions` (web/SDK) are covered by the denial messages below.
+- **Terminal denial guidance**: the firewall denial message and the hook denial messages
+  (raw-secret, placeholder) now state that equivalent workarounds (switching tools/paths, splitting
+  the request) are denied the same way, and that the only path forward is user approval in Vigil.
+- **Wider effect coverage**: `is_write_call` and the path / URL / shell field-name vocabularies
+  were extended (e.g. `remove`/`truncate`/`save`, `filename`/`folder`, `webhook_url`/`cmd`) so
+  unfamiliarly-named third-party tools are classified (Fs/Net/Exec) instead of falling through to
+  the default-deny floor. Floor behavior itself is unchanged.
+
+### Security
+
+- The firewall denial response **no longer echoes internal decision reasons** to the model. Those
+  reasons can contain request-derived file paths and hostnames (a causality-laundering side channel
+  that lets a model probe coverage boundaries); they now stay in the audit ledger only. No
+  enforcement behavior changed — every denial remains deterministic and fail-closed. Reviewed
+  independently by an adversarial sub-agent and Codex.
+
 ## [v0.2.0-beta.6] — 2026-06-15 — Detokenized-secret reflection guard (MCP gateway)
 
 ### Fixed — reverse-substitution symmetry between hook and MCP gateway
