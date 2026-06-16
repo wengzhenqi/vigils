@@ -12,9 +12,12 @@
     const listEl = document.getElementById("findings-list");
     const emptyHintEl = document.getElementById("empty-hint");
     const countLabel = document.getElementById("count-label");
+    const refreshBtn = document.getElementById("refresh-btn");
     const clearBtn = document.getElementById("clear-btn");
     const optionsLink = document.getElementById("options-link");
     const installHint = document.getElementById("install-hint");
+    const statusPill = document.getElementById("status-pill");
+    const statusLabel = document.getElementById("status-label");
     // α4 exempt UI refs
     const exemptLabel = document.getElementById("exempt-label");
     const exemptRemaining = document.getElementById("exempt-remaining");
@@ -42,13 +45,13 @@
         if (!Array.isArray(items) || items.length === 0) {
             emptyHintEl.classList.remove("hidden");
             listEl.classList.add("hidden");
-            countLabel.textContent = "0 条记录";
+            countLabel.textContent = "0 条";
             return;
         }
 
         emptyHintEl.classList.add("hidden");
         listEl.classList.remove("hidden");
-        countLabel.textContent = `${items.length} 条记录`;
+        countLabel.textContent = `${items.length} 条`;
 
         for (const it of items) {
             const li = document.createElement("li");
@@ -113,6 +116,12 @@
         });
     });
 
+    refreshBtn.addEventListener("click", () => {
+        refresh();
+        refreshExempt();
+        refreshTier();
+    });
+
     optionsLink.addEventListener("click", (ev) => {
         ev.preventDefault();
         // MV3 正确姿势:chrome.runtime.openOptionsPage() 处理 pop-up / tab 两种场景
@@ -141,6 +150,13 @@
     /** @type {{ tabId: number, origin: string } | null} 当前激活 tab,null 代表不可豁免 */
     let currentTab = null;
 
+    function setHeaderStatus(label, tone) {
+        if (!statusPill || !statusLabel) return;
+        statusLabel.textContent = label;
+        statusPill.classList.toggle("status-pill-warn", tone === "warn");
+        statusPill.classList.toggle("status-pill-muted", tone === "muted");
+    }
+
     /** 定位当前 tab + origin;非 http(s) 视为不可豁免(返 null)。 */
     async function loadCurrentTab() {
         try {
@@ -168,6 +184,7 @@
     /** 查 SW 豁免状态 + 渲染 UI。 */
     function refreshExempt() {
         if (!currentTab) {
+            setHeaderStatus("不支持", "muted");
             exemptLabel.textContent = "当前页不支持豁免(非 http/https)";
             exemptLabel.classList.remove("exempt-active");
             exemptRemaining.textContent = "";
@@ -188,6 +205,7 @@
                     return;
                 }
                 if (resp && resp.exempt) {
+                    setHeaderStatus("已豁免", "warn");
                     exemptLabel.textContent = "当前页已豁免";
                     exemptLabel.classList.add("exempt-active");
                     const remainMs = Math.max(0, resp.until - Date.now());
@@ -196,7 +214,8 @@
                     exempt10mBtn.disabled = true;
                     exemptClearBtn.classList.remove("hidden");
                 } else {
-                    exemptLabel.textContent = "当前页守门中";
+                    setHeaderStatus("保护中", "ok");
+                    exemptLabel.textContent = "当前页面保护中";
                     exemptLabel.classList.remove("exempt-active");
                     exemptRemaining.textContent = "";
                     exempt5mBtn.disabled = false;
@@ -249,15 +268,64 @@
         );
     });
 
-    // ISS-007:tier badge 展示(只读,切换由 options 页面负责)
-    const tierNameEl = document.getElementById("tier-name");
+    // ISS-007:tier 快速切换;复用 options 页同一 SW 消息,不新增权限 / storage。
+    const tierButtons = Array.from(document.querySelectorAll(".tier-btn"));
+    const tierHintEl = document.getElementById("tier-hint");
+    let currentTier = null;
+    let tierSwitchPending = false;
+
+    function setTierHint(msg, tone) {
+        if (!tierHintEl) return;
+        tierHintEl.textContent = msg || "";
+        tierHintEl.classList.toggle("tier-hint-warn", tone === "warn");
+    }
+
+    function renderTier(tier) {
+        currentTier = tier || null;
+        for (const btn of tierButtons) {
+            const active = btn.dataset.tier === currentTier;
+            btn.classList.toggle("tier-btn-active", active);
+            btn.setAttribute("aria-pressed", active ? "true" : "false");
+            btn.disabled = tierSwitchPending;
+        }
+        if (currentTier) setTierHint(currentTier, "ok");
+    }
+
     function refreshTier() {
+        if (tierSwitchPending) return;
         chrome.runtime.sendMessage({ type: "vigil_get_tier" }, (resp) => {
             if (chrome.runtime.lastError || !resp || !resp.tier) {
-                if (tierNameEl) tierNameEl.textContent = "-";
+                renderTier(null);
+                setTierHint("档位未知", "warn");
                 return;
             }
-            if (tierNameEl) tierNameEl.textContent = resp.tier;
+            renderTier(resp.tier);
+        });
+    }
+
+    for (const btn of tierButtons) {
+        btn.addEventListener("click", () => {
+            const next = btn.dataset.tier;
+            if (!next || next === currentTier) return;
+            tierSwitchPending = true;
+            for (const b of tierButtons) b.disabled = true;
+            setTierHint("切换中...");
+            chrome.runtime.sendMessage(
+                { type: "vigil_set_tier", tier: next },
+                (resp) => {
+                    tierSwitchPending = false;
+                    if (chrome.runtime.lastError || !resp || !resp.ok) {
+                        renderTier(currentTier);
+                        setTierHint(
+                            `切换失败:${(resp && resp._error) || "unknown"}`,
+                            "warn",
+                        );
+                        return;
+                    }
+                    renderTier(resp.tier);
+                    refresh();
+                },
+            );
         });
     }
 

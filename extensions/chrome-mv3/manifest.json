@@ -61,7 +61,7 @@
     }
   ],
   "action": {
-    "default_title": "Vigil",
+    "default_title": "Vigils",
     "default_popup": "popup.html"
   },
   "options_ui": {
