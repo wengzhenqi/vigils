@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vigil</title>
+  <title>Vigils</title>
   <!--
     I09b-α3 popup:展示最近 findings(origin / event_kind / action / findings)。
     不拉原文(ADR §I-9.1),数据 in-memory 只活 SW 生命周期内。
@@ -13,26 +13,40 @@
 </head>
 <body>
   <header>
-    <h1>Vigil</h1>
-    <span class="subtitle">paste/input/submit 守门</span>
+    <div>
+      <h1>Vigils</h1>
+      <span class="subtitle">paste/input/submit 保护</span>
+    </div>
+    <span id="status-pill" class="status-pill" aria-label="保护状态">
+      <span class="status-dot"></span>
+      <span id="status-label">保护中</span>
+    </span>
   </header>
 
   <section class="actions">
-    <span id="count-label" class="count-label">0 条记录</span>
-    <span
-      id="tier-badge"
-      class="tier-badge"
-      title="当前守门档位(点选项页切换)"
-      >档位: <strong id="tier-name">-</strong></span
-    >
-    <button id="clear-btn" type="button" title="清空 in-memory 最近记录">清空</button>
-    <a id="options-link" href="#" title="打开扩展选项页">选项</a>
+    <div class="actions-main">
+      <div class="count-block">
+        <span class="count-title">最近记录</span>
+        <span id="count-label" class="count-label">0 条</span>
+      </div>
+      <button id="refresh-btn" type="button" title="刷新最近记录和当前状态">刷新</button>
+      <button id="clear-btn" type="button" title="清空 in-memory 最近记录">清空</button>
+      <a id="options-link" href="#" title="打开扩展选项页">选项</a>
+    </div>
+    <div class="tier-switch" aria-label="保护档位">
+      <div class="tier-buttons" role="group" aria-label="快速切换保护档位">
+        <button type="button" class="tier-btn" data-tier="strict">strict</button>
+        <button type="button" class="tier-btn" data-tier="balanced">balanced</button>
+        <button type="button" class="tier-btn" data-tier="recall-first">recall-first</button>
+      </div>
+      <span id="tier-hint" class="tier-hint" aria-live="polite"></span>
+    </div>
   </section>
 
   <!-- α4 session-scoped 豁免(仅当前 tab + origin);用户主动放行的逃生阀 -->
   <section class="exempt-section">
     <div id="exempt-status" class="exempt-status">
-      <span id="exempt-label">当前页守门中</span>
+      <span id="exempt-label">当前页面保护中</span>
       <span id="exempt-remaining" class="exempt-remaining"></span>
     </div>
     <div class="exempt-actions">
@@ -44,7 +58,7 @@
 
   <section id="findings-section" aria-live="polite">
     <div id="empty-hint" class="empty-hint">
-      尚无记录 —— 在 ChatGPT / Claude / Gemini / Perplexity 触发 paste 或 submit 后即可看到。
+      尚无记录 —— 触发 paste 或 submit 后即可看到。
       若所有记录都是 <code>block</code> 且错误含 <code>host_disconnected</code>,请先
       <a id="install-hint" href="#">注册 Native Host</a>。
     </div>

@@ -916,16 +916,16 @@
                         const currentAdapter = adaptTarget(target);
                         if (!currentAdapter) return;
                         if (currentAdapter.getText() !== latestAgain) {
-                            showToast("Vigil: 输入内容已变化,请重新触发安全检查。", "warn");
+                            showToast("Vigils: 输入内容已变化,请重新触发安全检查。", "warn");
                             return;
                         }
                         // 经 writeFieldByExtension 登记 lastWritten,随后的自写 input 事件
                         // 按精确匹配跳过,保留 master 的防绕过语义。
                         writeFieldByExtension(target, currentAdapter, safeText);
-                        showToast("Vigil 已使用安全版本替换输入内容。", "info");
+                        showToast("Vigils 已使用安全版本替换输入内容。", "info");
                     },
                     onCancel: () => {
-                        showToast("Vigil 已取消本次安全替换。", "info");
+                        showToast("Vigils 已取消本次安全替换。", "info");
                     },
                 });
                 return;
@@ -934,7 +934,7 @@
             writeFieldByExtension(target, latestAdapter, "");
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
             const reason = resp._error || (resp.findings || []).join(", ") || "block";
-            showToast(`Vigil: 输入内容被阻断(${reason})`, "error");
+            showToast(`Vigils: 输入内容被阻断(${reason})`, "error");
         }, INPUT_DEBOUNCE_MS);
         inputChecks.set(target, next);
     }
@@ -992,7 +992,7 @@
                     ev.preventDefault();
                     ev.stopPropagation();
                     showToast(
-                        "Vigil: 富文本粘贴已拦截,请用纯文本粘贴(Ctrl+Shift+V)再试",
+                        "Vigils: 富文本粘贴已拦截,请用纯文本粘贴(Ctrl+Shift+V)再试",
                         "warn",
                     );
                 }
@@ -1031,15 +1031,15 @@
                             pasteSnapshot &&
                             currentAdapter.getText() !== pasteSnapshot.text
                         ) {
-                            showToast("Vigil: 输入内容已变化,请重新粘贴安全版本。", "warn");
+                            showToast("Vigils: 输入内容已变化,请重新粘贴安全版本。", "warn");
                             return;
                         }
                         // 在快照位置插入显示归一后的脱敏文本(不抹掉框内既有内容)
                         insertAtPasteSnapshot(target, currentAdapter, safeText, pasteSnapshot);
-                        showToast("Vigil 已插入安全版本。", "info");
+                        showToast("Vigils 已插入安全版本。", "info");
                     },
                     onCancel: () => {
-                        showToast("Vigil 已取消本次粘贴。", "info");
+                        showToast("Vigils 已取消本次粘贴。", "info");
                     },
                 });
                 return;
@@ -1047,7 +1047,7 @@
             // block / 未知 action / 协议错误 —— fail-closed
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
             const reason = resp._error || (resp.findings || []).join(", ") || "block";
-            showToast(`Vigil: 粘贴被阻断(${reason})`, "error");
+            showToast(`Vigils: 粘贴被阻断(${reason})`, "error");
         },
         true, // 捕获阶段,抢先拿到 event
     );
@@ -1160,19 +1160,19 @@
                                 if (!currentAdapter) return;
                                 if (currentAdapter.getText() !== originalText) {
                                     showToast(
-                                        "Vigil: 提交内容已变化,请重新触发安全检查。",
+                                        "Vigils: 提交内容已变化,请重新触发安全检查。",
                                         "warn",
                                     );
                                     return;
                                 }
                                 writeFieldByExtension(primaryInput, currentAdapter, safeText);
                                 showToast(
-                                    `Vigil 已为${siteLabel || "当前输入"}应用安全版本，请确认后再提交。`,
+                                    `Vigils 已为${siteLabel || "当前输入"}应用安全版本，请确认后再提交。`,
                                     "info",
                                 );
                             },
                             onCancel: () => {
-                                showToast("Vigil 已取消本次提交。", "info");
+                                showToast("Vigils 已取消本次提交。", "info");
                             },
                         });
                         return;
@@ -1180,14 +1180,14 @@
                 }
                 // primaryInput 不可用 → 降级 block
                 showToast(
-                    `Vigil 检测到 ${formatFindingList(resp.findings)}，但无法定位具体输入框完成脱敏。请手工清理后再提交。`,
+                    `Vigils 检测到 ${formatFindingList(resp.findings)}，但无法定位具体输入框完成脱敏。请手工清理后再提交。`,
                     "warn",
                 );
                 return;
             }
             const reason = resp._error || (resp.findings || []).join(", ") || "block";
             if (primaryInput instanceof HTMLElement) setInputVigilState(primaryInput, "block");
-            showToast(`Vigil: 提交被阻断(${reason})`, "error");
+            showToast(`Vigils: 提交被阻断(${reason})`, "error");
         },
         true,
     );
@@ -1226,16 +1226,16 @@
                             if (!currentAdapter) return;
                             if (currentAdapter.getText() !== originalText) {
                                 showToast(
-                                    "Vigil: 提交内容已变化,请重新触发安全检查。",
+                                    "Vigils: 提交内容已变化,请重新触发安全检查。",
                                     "warn",
                                 );
                                 return;
                             }
                             writeFieldByExtension(target, currentAdapter, safeText);
-                            showToast("Vigil 已应用安全版本，请确认后再提交。", "info");
+                            showToast("Vigils 已应用安全版本，请确认后再提交。", "info");
                         },
                         onCancel: () => {
-                            showToast("Vigil 已取消本次提交。", "info");
+                            showToast("Vigils 已取消本次提交。", "info");
                         },
                     });
                 }
@@ -1243,7 +1243,7 @@
             }
             const reason = resp._error || (resp.findings || []).join(", ") || "block";
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            showToast(`Vigil: 提交被阻断(${reason})`, "error");
+            showToast(`Vigils: 提交被阻断(${reason})`, "error");
         },
         true,
     );
