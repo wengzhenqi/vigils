@@ -34,8 +34,35 @@
 (() => {
     "use strict";
 
+    if (globalThis.__vigilBrowserGuardLoaded) {
+        globalThis.__vigilBrowserGuardDisabled = false;
+        return;
+    }
+    globalThis.__vigilBrowserGuardLoaded = true;
+    globalThis.__vigilBrowserGuardDisabled = false;
+
     const ORIGIN = location.origin;
     const INPUT_DEBOUNCE_MS = 700;
+
+    function isGuardDisabled() {
+        return globalThis.__vigilBrowserGuardDisabled === true;
+    }
+
+    function disableGuard() {
+        globalThis.__vigilBrowserGuardDisabled = true;
+        closeSafePrompt();
+        if (toastEl) toastEl.remove();
+        for (const frame of document.querySelectorAll("[data-vigil-input-ring]")) {
+            if (frame instanceof HTMLElement) clearInputVigilFrame(frame);
+        }
+    }
+
+    chrome.runtime.onMessage.addListener((msg) => {
+        if (!msg || msg.type !== "vigil_disable_guard") return false;
+        if (typeof msg.origin === "string" && msg.origin !== ORIGIN) return false;
+        disableGuard();
+        return false;
+    });
 
     // ───────────────────────── 极简通知 UI(固定在页面顶部) ─────────────────────────
 
@@ -486,6 +513,11 @@
         return new Promise((resolve) => {
             let replied = false;
             try {
+                if (isGuardDisabled()) {
+                    replied = true;
+                    resolve({ action: "allow", findings: [], _disabled: true });
+                    return;
+                }
                 // runtime 缺失守门:扩展上下文失效(reload/更新/卸载)时 chrome.runtime 可能
                 // 为 undefined。显式 fail-closed,而非依赖属性访问抛错(行为等价但更清晰)。
                 const runtime =
@@ -863,6 +895,7 @@
     }
 
     function scheduleInputCheck(target, adapter) {
+        if (isGuardDisabled()) return;
         adapter = adapter || adaptTarget(target);
         if (!adapter || !(target instanceof Element)) return;
         if (target instanceof HTMLElement) setInputVigilState(target, "guarded");
@@ -888,6 +921,7 @@
             lastWritten: prev.lastWritten,
         };
         next.timer = setTimeout(async () => {
+            if (isGuardDisabled()) return;
             const current = inputChecks.get(target);
             if (!current || current.seq !== next.seq) return;
             const ad = adaptTarget(target);
@@ -942,6 +976,7 @@
     document.addEventListener(
         "input",
         (ev) => {
+            if (isGuardDisabled()) return;
             try {
                 const adapted = adaptEventTarget(ev);
                 if (adapted) {
@@ -960,6 +995,7 @@
     document.addEventListener(
         "focusin",
         (ev) => {
+            if (isGuardDisabled()) return;
             const adapted = adaptEventTarget(ev);
             if (adapted && adapted.target instanceof HTMLElement) {
                 setInputVigilState(adapted.target, "guarded");
@@ -973,6 +1009,7 @@
     document.addEventListener(
         "paste",
         async (ev) => {
+            if (isGuardDisabled()) return;
             const adapted = adaptEventTarget(ev);
             if (!adapted) return; // 非文本输入,放行
             const { target, adapter } = adapted;
@@ -1116,6 +1153,7 @@
     document.addEventListener(
         "submit",
         async (ev) => {
+            if (isGuardDisabled()) return;
             const form = ev.target;
             if (!(form instanceof HTMLFormElement)) return;
             // allow-once 短路(R1 MUST-FIX 1)
@@ -1196,6 +1234,7 @@
     document.addEventListener(
         "keydown",
         async (ev) => {
+            if (isGuardDisabled()) return;
             if (ev.key !== "Enter" || ev.shiftKey || ev.isComposing) return;
             const target = ev.target;
             if (!(target instanceof HTMLElement)) return;

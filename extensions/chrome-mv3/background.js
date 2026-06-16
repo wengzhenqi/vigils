@@ -35,10 +35,13 @@ import {
     TIER_DEFAULT,
     applyTierDecision,
 } from "./tier-decision.js";
+import { normalizeCustomSiteInput } from "./custom-sites.js";
 
 const NATIVE_HOST_NAME = "com.vigil.host";
 const MAX_TEXT_CHARS = 32 * 1024 * 1024; // 32 MB 字符早退;Host 1 MB 帧上限由 Host 自己规范化拒绝
 const REQUEST_TTL_MS = 10_000;
+const CUSTOM_SITES_STORAGE_KEY = "customProtectedSites";
+const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
 
 // ───────────────────────── v0.4 / ISS-007:3 档策略决策层 ─────────────────────────
 //
@@ -59,8 +62,8 @@ const REQUEST_TTL_MS = 10_000;
 // 这保证 tier 是**纵深防御**一层,而不是 tier 本身就是漏洞。
 //
 // 持久化:tier 存 SW in-memory,浏览器重启恢复 default "balanced"。
-// **不加 storage permission**(继续 α4 最小权限原则);Stage 2+ 可用 Native Host config
-// 持久化(RPC 启动时拉一次);当前 MVP 接受 session 级设置 + 持续设置留给后续 ISS。
+// tier 本身不落 chrome.storage;Stage 2+ 可用 Native Host config 持久化(RPC 启动
+// 时拉一次);当前 MVP 接受 session 级设置 + 持续设置留给后续 ISS。
 //
 // `TIER_VALUES` / `TIER_DEFAULT` / `applyTierDecision` 从 `tier-decision.js` 导入,
 // 跟 Node 单测共用同一实现(与 feedback_production_logic_testable 纪律一致)。
@@ -68,8 +71,276 @@ const REQUEST_TTL_MS = 10_000;
 /** @type {string} 当前档位,in-memory session 级 */
 let currentTier = TIER_DEFAULT;
 
+// ───────────────────────── 自定义目标网站白名单 ─────────────────────────
+//
+// 用户在 options 页添加域名后,options 先在点击手势内请求 host permission,再让
+// SW 做持久化 + 动态 content script 注册。storage 中只存 host/pattern 元数据,不存页面原文。
+
+function storageGet(defaults) {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(defaults, (value) => resolve(value || defaults));
+    });
+}
+
+function storageSet(value) {
+    return new Promise((resolve, reject) => {
+        chrome.storage.local.set(value, () => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+async function loadCustomSites() {
+    const got = await storageGet({ [CUSTOM_SITES_STORAGE_KEY]: [] });
+    const rawSites = got[CUSTOM_SITES_STORAGE_KEY];
+    if (!Array.isArray(rawSites)) return [];
+    const clean = [];
+    const seen = new Set();
+    for (const site of rawSites) {
+        if (!site || typeof site.host !== "string") continue;
+        const normalized = normalizeCustomSiteInput(site.host);
+        if (!normalized.ok || seen.has(normalized.pattern)) continue;
+        seen.add(normalized.pattern);
+        clean.push({
+            host: normalized.host,
+            pattern: normalized.pattern,
+            addedAt:
+                typeof site.addedAt === "number" && Number.isFinite(site.addedAt)
+                    ? site.addedAt
+                    : Date.now(),
+        });
+    }
+    return clean;
+}
+
+async function saveCustomSites(sites) {
+    await storageSet({ [CUSTOM_SITES_STORAGE_KEY]: sites });
+}
+
+function permissionsContains(origins) {
+    return new Promise((resolve) => {
+        chrome.permissions.contains({ origins }, (allowed) => {
+            resolve(Boolean(allowed));
+        });
+    });
+}
+
+function permissionsRemove(origins) {
+    return new Promise((resolve) => {
+        chrome.permissions.remove({ origins }, (removed) => resolve(Boolean(removed)));
+    });
+}
+
+function patternForOrigin(origin) {
+    try {
+        const url = new URL(origin);
+        if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+        return `${url.origin}/*`;
+    } catch {
+        return null;
+    }
+}
+
+async function isProtectedOrigin(origin) {
+    const pattern = patternForOrigin(origin);
+    if (!pattern) return false;
+    return permissionsContains([pattern]);
+}
+
+function isRequiredHostPattern(pattern) {
+    const manifest = chrome.runtime.getManifest();
+    const hostPermissions = Array.isArray(manifest.host_permissions)
+        ? manifest.host_permissions
+        : [];
+    return hostPermissions.includes(pattern);
+}
+
+function unregisterCustomContentScript() {
+    return new Promise((resolve) => {
+        if (!chrome.scripting || !chrome.scripting.unregisterContentScripts) {
+            resolve();
+            return;
+        }
+        chrome.scripting.unregisterContentScripts(
+            { ids: [CUSTOM_CONTENT_SCRIPT_ID] },
+            () => resolve(),
+        );
+    });
+}
+
+function registerCustomContentScript(matches) {
+    return new Promise((resolve, reject) => {
+        chrome.scripting.registerContentScripts(
+            [
+                {
+                    id: CUSTOM_CONTENT_SCRIPT_ID,
+                    matches,
+                    js: ["content-script.js"],
+                    runAt: "document_idle",
+                    allFrames: true,
+                    persistAcrossSessions: true,
+                },
+            ],
+            () => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                    resolve();
+                }
+            },
+        );
+    });
+}
+
+let customContentScriptSyncTail = Promise.resolve();
+
+async function syncCustomContentScriptsNow() {
+    const sites = await loadCustomSites();
+    const matches = [];
+    for (const site of sites) {
+        if (await permissionsContains([site.pattern])) {
+            matches.push(site.pattern);
+        }
+    }
+    await unregisterCustomContentScript();
+    if (matches.length === 0) return;
+    await registerCustomContentScript(matches);
+}
+
+function syncCustomContentScripts() {
+    const run = customContentScriptSyncTail
+        .catch(() => {})
+        .then(syncCustomContentScriptsNow);
+    customContentScriptSyncTail = run.catch(() => {});
+    return run;
+}
+
+function tabsQuery(queryInfo) {
+    return new Promise((resolve) => {
+        chrome.tabs.query(queryInfo, (tabs) => resolve(Array.isArray(tabs) ? tabs : []));
+    });
+}
+
+function executeContentScript(tabId) {
+    return new Promise((resolve) => {
+        chrome.scripting.executeScript(
+            {
+                target: { tabId, allFrames: true },
+                files: ["content-script.js"],
+            },
+            () => resolve(),
+        );
+    });
+}
+
+function sendDisableGuardMessage(tabId, origin) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "vigil_disable_guard", origin }, () => {
+            void chrome.runtime.lastError;
+            resolve();
+        });
+    });
+}
+
+function forceDisableGuard(tabId) {
+    return new Promise((resolve) => {
+        chrome.scripting.executeScript(
+            {
+                target: { tabId, allFrames: true },
+                func: () => {
+                    globalThis.__vigilBrowserGuardDisabled = true;
+                    for (const el of document.querySelectorAll(
+                        "[data-vigil-toast], [data-vigil-safe-prompt]",
+                    )) {
+                        el.remove();
+                    }
+                },
+            },
+            () => {
+                void chrome.runtime.lastError;
+                resolve();
+            },
+        );
+    });
+}
+
+async function injectCustomSiteIntoOpenTabs(pattern) {
+    if (!chrome.tabs || !chrome.scripting) return;
+    const tabs = await tabsQuery({ url: pattern });
+    for (const tab of tabs) {
+        if (typeof tab.id === "number") {
+            await executeContentScript(tab.id);
+        }
+    }
+}
+
+async function disableCustomSiteInOpenTabs(pattern, origin) {
+    if (!chrome.tabs || !chrome.scripting) return;
+    const tabs = await tabsQuery({ url: pattern });
+    for (const tab of tabs) {
+        if (typeof tab.id === "number") {
+            await sendDisableGuardMessage(tab.id, origin);
+            await forceDisableGuard(tab.id);
+        }
+    }
+}
+
+async function listCustomSitesWithPermissions() {
+    const sites = await loadCustomSites();
+    const enriched = [];
+    for (const site of sites) {
+        enriched.push({
+            ...site,
+            hasPermission: await permissionsContains([site.pattern]),
+        });
+    }
+    return enriched;
+}
+
+async function addCustomSite(site) {
+    const normalized = normalizeCustomSiteInput(site && (site.host || site.pattern));
+    if (!normalized.ok) return { ok: false, _error: normalized.error };
+    const allowed = await permissionsContains([normalized.pattern]);
+    if (!allowed) return { ok: false, _error: "permission_missing" };
+
+    const sites = await loadCustomSites();
+    const existing = sites.find((it) => it.pattern === normalized.pattern);
+    const next = existing
+        ? sites
+        : sites.concat([
+              {
+                  host: normalized.host,
+                  pattern: normalized.pattern,
+                  addedAt: Date.now(),
+              },
+          ]);
+    if (!existing) await saveCustomSites(next);
+    await syncCustomContentScripts();
+    await injectCustomSiteIntoOpenTabs(normalized.pattern);
+    return { ok: true, site: existing || next[next.length - 1] };
+}
+
+async function removeCustomSite(input) {
+    const normalized = normalizeCustomSiteInput(input);
+    if (!normalized.ok) return { ok: false, _error: normalized.error };
+    const sites = await loadCustomSites();
+    const next = sites.filter((site) => site.pattern !== normalized.pattern);
+    if (!isRequiredHostPattern(normalized.pattern)) {
+        await disableCustomSiteInOpenTabs(normalized.pattern, `https://${normalized.host}`);
+    }
+    await saveCustomSites(next);
+    await permissionsRemove([normalized.pattern]);
+    await syncCustomContentScripts();
+    return { ok: true };
+}
+
 // α3:popup 展示用的最近 findings 环形队列(in-memory,SW 生命周期内有效)。
-// 不落 chrome.storage(需要 storage permission,违最小权限 β1 教训),不记原文(ADR §I-9.1),
+// findings 不落 chrome.storage,不记原文(ADR §I-9.1);
+// storage 权限仅用于自定义保护网站 host/pattern 元数据。
 // 仅保留"脱敏元数据" —— origin + event_kind + action + findings(enum 字面量列表) +
 // timestamp(ms epoch)。SW 被 Chrome 杀掉后清零(轻量隐私 + 符合"原文仅 Host 内存停留"语义)。
 const FINDINGS_LOG_MAX = 32;
@@ -318,26 +589,67 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             sender && sender.tab && typeof sender.tab.id === "number"
                 ? sender.tab.id
                 : -1;
-        if (tabId !== -1 && isExempt(tabId, msg.origin)) {
-            const resp = { action: "allow", findings: [], _exempt: true };
-            recordFinding({
-                ts: Date.now(),
-                origin: msg.origin || "?",
-                event_kind: msg.event_kind || "?",
-                action: "allow_exempt",
-                findings: [],
+        isProtectedOrigin(msg.origin)
+            .then((protected) => {
+                if (!protected) {
+                    sendResponse({
+                        action: "allow",
+                        findings: [],
+                        _disabled: true,
+                    });
+                    return null;
+                }
+                if (tabId !== -1 && isExempt(tabId, msg.origin)) {
+                    const resp = { action: "allow", findings: [], _exempt: true };
+                    recordFinding({
+                        ts: Date.now(),
+                        origin: msg.origin || "?",
+                        event_kind: msg.event_kind || "?",
+                        action: "allow_exempt",
+                        findings: [],
+                    });
+                    sendResponse(resp);
+                    return null;
+                }
+                return checkWithHost({
+                    origin: msg.origin,
+                    event_kind: msg.event_kind,
+                    text: msg.text,
+                })
+                    .then((rawResp) => applyTierDecision(rawResp, currentTier))
+                    .then(sendResponse);
+            })
+            .catch(() => {
+                sendResponse({ action: "allow", findings: [], _disabled: true });
             });
-            sendResponse(resp);
-            return false; // 同步响应
-        }
-        checkWithHost({
-            origin: msg.origin,
-            event_kind: msg.event_kind,
-            text: msg.text,
-        })
-            .then((rawResp) => applyTierDecision(rawResp, currentTier))
-            .then(sendResponse);
         return true; // 异步响应(MV3 要求 listener return true 保持 sendResponse 有效)
+    }
+
+    // 自定义目标网站:options 页先请求 host permission,SW 负责校验 + 持久化 + 动态注册。
+    if (msg.type === "vigil_normalize_custom_site") {
+        sendResponse(normalizeCustomSiteInput(msg.input));
+        return false;
+    }
+
+    if (msg.type === "vigil_list_custom_sites") {
+        listCustomSitesWithPermissions()
+            .then((sites) => sendResponse({ sites }))
+            .catch((err) => sendResponse({ sites: [], _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_add_custom_site") {
+        addCustomSite(msg.site)
+            .then(sendResponse)
+            .catch((err) => sendResponse({ ok: false, _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_remove_custom_site") {
+        removeCustomSite(msg.input)
+            .then(sendResponse)
+            .catch((err) => sendResponse({ ok: false, _error: String(err) }));
+        return true;
     }
 
     // α3 新增:popup 拉取最近 findings(in-memory 环形队列,最多 FINDINGS_LOG_MAX 条)
@@ -435,7 +747,23 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     }
 });
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "local" && changes[CUSTOM_SITES_STORAGE_KEY]) {
+        syncCustomContentScripts().catch(() => {});
+    }
+});
+
+if (chrome.permissions && chrome.permissions.onRemoved) {
+    chrome.permissions.onRemoved.addListener((permissions) => {
+        if (permissions && Array.isArray(permissions.origins)) {
+            syncCustomContentScripts().catch(() => {});
+        }
+    });
+}
+
 // ───────────────────────── service worker 生命周期 ─────────────────────────
+
+syncCustomContentScripts().catch(() => {});
 
 self.addEventListener("install", () => {
     // MV3 service worker 在 install 中调 skipWaiting,让新版本立即接管
@@ -446,6 +774,10 @@ self.addEventListener("install", () => {
 
 self.addEventListener("activate", (event) => {
     if (self.clients && typeof self.clients.claim === "function") {
-        event.waitUntil(self.clients.claim());
+        event.waitUntil(
+            Promise.all([self.clients.claim(), syncCustomContentScripts()]).catch(
+                () => {},
+            ),
+        );
     }
 });

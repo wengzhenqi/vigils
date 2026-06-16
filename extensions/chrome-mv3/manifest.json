@@ -7,7 +7,12 @@
   "minimum_chrome_version": "120",
   "permissions": [
     "nativeMessaging",
-    "activeTab"
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
   ],
   "host_permissions": [
     "https://chatgpt.com/*",

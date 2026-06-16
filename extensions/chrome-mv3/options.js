@@ -1,3 +1,5 @@
+import { normalizeCustomSiteInput } from "./custom-sites.js";
+
 // I09b-α3 options page —— 扩展 ID 展示 + Native Host install 命令复制助手。
 //
 // 目标:β1 `vigil-native-host install --extension-id <ID>` 的 `<ID>` 只有用户装扩展后才
@@ -19,6 +21,12 @@
     const copyCmdHint = document.getElementById("copy-cmd-hint");
     const uninstallCmdEl = document.getElementById("uninstall-cmd");
     const statusCmdEl = document.getElementById("status-cmd");
+    const customSiteForm = document.getElementById("custom-site-form");
+    const customSiteInput = document.getElementById("custom-site-input");
+    const customSiteAddBtn = document.getElementById("custom-site-add-btn");
+    const customSiteHint = document.getElementById("custom-site-hint");
+    const customSiteList = document.getElementById("custom-site-list");
+    const customSiteEmpty = document.getElementById("custom-site-empty");
 
     // Chrome 扩展 ID:`chrome.runtime.id` 返 32 chars a-p,是 Chrome 对扩展源码的哈希;
     // install/reload 后稳定,用户卸载重装会变(所以 Host manifest 注册后如果重装扩展
@@ -87,6 +95,167 @@
         flashHint(ok ? "命令已复制(含平台注释)" : "复制失败(请手工选中)");
     });
 
+    // ─── 自定义保护网站 ───────────────────────────────────────────
+    // options 页负责在用户点击手势内请求 host permission;SW 负责校验、持久化和动态注入。
+
+    function sendRuntimeMessage(msg) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(msg, (resp) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ ok: false, _error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve(resp || {});
+            });
+        });
+    }
+
+    function requestOriginPermission(pattern) {
+        return new Promise((resolve) => {
+            chrome.permissions.request({ origins: [pattern] }, (granted) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ granted: false, _error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve({ granted: Boolean(granted) });
+            });
+        });
+    }
+
+    function removeOriginPermission(pattern) {
+        return new Promise((resolve) => {
+            chrome.permissions.remove({ origins: [pattern] }, () => {
+                void chrome.runtime.lastError;
+                resolve();
+            });
+        });
+    }
+
+    const customSiteErrorLabels = {
+        empty: "请输入域名",
+        wildcard_not_allowed: "不支持通配符",
+        userinfo_not_allowed: "不允许包含用户名或密码",
+        domain_only: "只支持域名,不支持路径或查询参数",
+        invalid_host: "域名格式无效",
+        https_only: "仅支持 HTTPS 网站",
+        permission_missing: "站点权限未授权",
+    };
+
+    function flashCustomSiteHint(msg, tone /* "ok" | "warn" */) {
+        customSiteHint.textContent = msg;
+        customSiteHint.style.color = tone === "warn" ? "#b45309" : "#15803d";
+        customSiteHint.classList.remove("fade");
+        clearTimeout(flashCustomSiteHint._t);
+        flashCustomSiteHint._t = setTimeout(() => {
+            customSiteHint.classList.add("fade");
+        }, 2200);
+    }
+
+    function customSiteErrorMessage(code) {
+        return customSiteErrorLabels[code] || String(code || "unknown");
+    }
+
+    function renderCustomSites(sites) {
+        customSiteList.replaceChildren();
+        const items = Array.isArray(sites) ? sites : [];
+        customSiteEmpty.classList.toggle("hidden", items.length !== 0);
+
+        for (const site of items) {
+            const li = document.createElement("li");
+            li.className = "custom-site-row";
+
+            const host = document.createElement("code");
+            host.className = "custom-site-host";
+            host.textContent = site.host || site.pattern || "?";
+            host.title = site.pattern || site.host || "";
+
+            const status = document.createElement("span");
+            status.className = "custom-site-status";
+            if (site.hasPermission) {
+                status.textContent = "已授权";
+            } else {
+                status.textContent = "缺权限";
+                status.classList.add("custom-site-status-missing");
+            }
+
+            const removeBtn = document.createElement("button");
+            removeBtn.type = "button";
+            removeBtn.className = "custom-site-remove";
+            removeBtn.textContent = "删除";
+            removeBtn.addEventListener("click", async () => {
+                removeBtn.disabled = true;
+                const resp = await sendRuntimeMessage({
+                    type: "vigil_remove_custom_site",
+                    input: site.host || site.pattern,
+                });
+                if (!resp || !resp.ok) {
+                    flashCustomSiteHint(
+                        `删除失败:${customSiteErrorMessage(resp && resp._error)}`,
+                        "warn",
+                    );
+                    removeBtn.disabled = false;
+                    return;
+                }
+                flashCustomSiteHint("已删除并释放站点权限");
+                await refreshCustomSites();
+            });
+
+            li.replaceChildren(host, status, removeBtn);
+            customSiteList.appendChild(li);
+        }
+    }
+
+    async function refreshCustomSites() {
+        const resp = await sendRuntimeMessage({ type: "vigil_list_custom_sites" });
+        renderCustomSites(resp && resp.sites);
+    }
+
+    customSiteForm.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const input = customSiteInput.value;
+        customSiteAddBtn.disabled = true;
+        try {
+            const normalized = normalizeCustomSiteInput(input);
+            if (!normalized || !normalized.ok) {
+                flashCustomSiteHint(
+                    `添加失败:${customSiteErrorMessage(normalized && normalized.error)}`,
+                    "warn",
+                );
+                return;
+            }
+
+            const permission = await requestOriginPermission(normalized.pattern);
+            if (!permission.granted) {
+                flashCustomSiteHint(
+                    permission._error
+                        ? `授权失败:${permission._error}`
+                        : "用户未授权该网站权限",
+                    "warn",
+                );
+                return;
+            }
+
+            const added = await sendRuntimeMessage({
+                type: "vigil_add_custom_site",
+                site: normalized,
+            });
+            if (!added || !added.ok) {
+                await removeOriginPermission(normalized.pattern);
+                flashCustomSiteHint(
+                    `保存失败:${customSiteErrorMessage(added && added._error)}`,
+                    "warn",
+                );
+                return;
+            }
+
+            customSiteInput.value = "";
+            flashCustomSiteHint(`已保护 ${normalized.host}`);
+            await refreshCustomSites();
+        } finally {
+            customSiteAddBtn.disabled = false;
+        }
+    });
+
     // ─── ISS-007:3 档档位选择 ───────────────────────────────────────
     // 查 SW 当前 tier 并回填 radio;用户切换 → 发消息回 SW。
     // SW 不持久化(in-memory),每次打开 options 都重新读,避免 UI 与 SW 状态漂移。
@@ -139,4 +308,6 @@
             }
         );
     });
+
+    refreshCustomSites();
 })();

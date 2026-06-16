@@ -4,7 +4,7 @@
 //   - §I-9.1:findings 条目不含原文;只有 origin / event_kind / action / findings enum 列表 / ts
 //   - CSP `script-src 'self'`:所有 DOM 文本用 textContent(无 innerHTML / outerHTML),
 //     即使 origin 字段被后端污染也只作纯文本展示(XSS 安全)
-//   - 无 chrome.storage 依赖(最小权限,延续 β1 manifest 削减后的 `permissions: ["nativeMessaging"]`)
+//   - popup 本身无 chrome.storage 依赖;findings 只读 SW 内存队列
 
 (() => {
     "use strict";
