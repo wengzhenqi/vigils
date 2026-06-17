@@ -273,6 +273,9 @@
     const tierHintEl = document.getElementById("tier-hint");
     let currentTier = null;
     let tierSwitchPending = false;
+    const TIER_STORAGE_KEY = "vigilTier";
+    const TIER_DEFAULT = "balanced";
+    const TIER_VALUES = ["strict", "balanced", "recall-first"];
 
     function setTierHint(msg, tone) {
         if (!tierHintEl) return;
@@ -293,13 +296,36 @@
 
     function refreshTier() {
         if (tierSwitchPending) return;
-        chrome.runtime.sendMessage({ type: "vigil_get_tier" }, (resp) => {
-            if (chrome.runtime.lastError || !resp || !resp.tier) {
+        chrome.storage.local.get({ [TIER_STORAGE_KEY]: TIER_DEFAULT }, (got) => {
+            if (chrome.runtime.lastError) {
                 renderTier(null);
                 setTierHint("档位未知", "warn");
                 return;
             }
-            renderTier(resp.tier);
+            const tier = got[TIER_STORAGE_KEY];
+            renderTier(TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT);
+        });
+    }
+
+    function setTier(next, callback) {
+        if (!TIER_VALUES.includes(next)) {
+            callback({ ok: false, _error: "invalid_tier" });
+            return;
+        }
+        chrome.storage.local.set({ [TIER_STORAGE_KEY]: next }, () => {
+            if (chrome.runtime.lastError) {
+                callback({
+                    ok: false,
+                    _error: chrome.runtime.lastError.message || "runtime_error",
+                });
+                return;
+            }
+            // Best-effort wake/update for an already-running service worker. Storage is
+            // the source of truth, so this callback must not gate UI success.
+            chrome.runtime.sendMessage({ type: "vigil_set_tier", tier: next }, () => {
+                void chrome.runtime.lastError;
+            });
+            callback({ ok: true, tier: next });
         });
     }
 
@@ -310,22 +336,16 @@
             tierSwitchPending = true;
             for (const b of tierButtons) b.disabled = true;
             setTierHint("切换中...");
-            chrome.runtime.sendMessage(
-                { type: "vigil_set_tier", tier: next },
-                (resp) => {
-                    tierSwitchPending = false;
-                    if (chrome.runtime.lastError || !resp || !resp.ok) {
-                        renderTier(currentTier);
-                        setTierHint(
-                            `切换失败:${(resp && resp._error) || "unknown"}`,
-                            "warn",
-                        );
-                        return;
-                    }
-                    renderTier(resp.tier);
-                    refresh();
-                },
-            );
+            setTier(next, (resp) => {
+                tierSwitchPending = false;
+                if (!resp || !resp.ok) {
+                    renderTier(currentTier);
+                    setTierHint(`切换失败:${(resp && resp._error) || "unknown"}`, "warn");
+                    return;
+                }
+                renderTier(resp.tier);
+                refresh();
+            });
         });
     }
 

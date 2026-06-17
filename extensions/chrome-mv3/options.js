@@ -27,6 +27,9 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
     const customSiteHint = document.getElementById("custom-site-hint");
     const customSiteList = document.getElementById("custom-site-list");
     const customSiteEmpty = document.getElementById("custom-site-empty");
+    const TIER_STORAGE_KEY = "vigilTier";
+    const TIER_DEFAULT = "balanced";
+    const TIER_VALUES = ["strict", "balanced", "recall-first"];
 
     // Chrome 扩展 ID:`chrome.runtime.id` 返 32 chars a-p,是 Chrome 对扩展源码的哈希;
     // install/reload 后稳定,用户卸载重装会变(所以 Host manifest 注册后如果重装扩展
@@ -280,13 +283,34 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         if (input) input.checked = true;
     }
 
-    // 初始化:拉取 SW 当前 tier
-    chrome.runtime.sendMessage({ type: "vigil_get_tier" }, (resp) => {
-        if (chrome.runtime.lastError || !resp || !resp.tier) {
-            flashTierHint("无法读取档位(SW 未就绪?)", "warn");
+    function persistTier(next, callback) {
+        if (!TIER_VALUES.includes(next)) {
+            callback({ ok: false, _error: "invalid_tier" });
             return;
         }
-        setCheckedTier(resp.tier);
+        chrome.storage.local.set({ [TIER_STORAGE_KEY]: next }, () => {
+            if (chrome.runtime.lastError) {
+                callback({
+                    ok: false,
+                    _error: chrome.runtime.lastError.message || "runtime_error",
+                });
+                return;
+            }
+            chrome.runtime.sendMessage({ type: "vigil_set_tier", tier: next }, () => {
+                void chrome.runtime.lastError;
+            });
+            callback({ ok: true, tier: next });
+        });
+    }
+
+    // 初始化:从 storage 读取当前 tier;SW 也监听同一个 key。
+    chrome.storage.local.get({ [TIER_STORAGE_KEY]: TIER_DEFAULT }, (got) => {
+        if (chrome.runtime.lastError) {
+            flashTierHint("无法读取档位", "warn");
+            return;
+        }
+        const tier = got[TIER_STORAGE_KEY];
+        setCheckedTier(TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT);
     });
 
     // 切换事件:change 监听挂在 fieldset 上,event delegation 覆盖 3 radio
@@ -294,19 +318,13 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         const tgt = ev.target;
         if (!tgt || tgt.name !== "tier" || !tgt.checked) return;
         const next = tgt.value;
-        chrome.runtime.sendMessage(
-            { type: "vigil_set_tier", tier: next },
-            (resp) => {
-                if (chrome.runtime.lastError || !resp || !resp.ok) {
-                    flashTierHint(
-                        `切换失败:${(resp && resp._error) || "unknown"}`,
-                        "warn"
-                    );
-                    return;
-                }
-                flashTierHint(`档位已切换为 ${resp.tier}`);
+        persistTier(next, (resp) => {
+            if (!resp || !resp.ok) {
+                flashTierHint(`切换失败:${(resp && resp._error) || "unknown"}`, "warn");
+                return;
             }
-        );
+            flashTierHint(`档位已切换为 ${resp.tier}`);
+        });
     });
 
     refreshCustomSites();

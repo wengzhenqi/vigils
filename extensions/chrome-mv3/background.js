@@ -42,6 +42,8 @@ const MAX_TEXT_CHARS = 32 * 1024 * 1024; // 32 MB 字符早退;Host 1 MB 帧上�
 const REQUEST_TTL_MS = 10_000;
 const CUSTOM_SITES_STORAGE_KEY = "customProtectedSites";
 const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
+const TIER_STORAGE_KEY = "vigilTier";
+const EXTENSION_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
 
 // ───────────────────────── v0.4 / ISS-007:3 档策略决策层 ─────────────────────────
 //
@@ -61,9 +63,8 @@ const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
 //   - NH 返 redact → tier 仅能 override 为 block(不能 override 为 allow)
 // 这保证 tier 是**纵深防御**一层,而不是 tier 本身就是漏洞。
 //
-// 持久化:tier 存 SW in-memory,浏览器重启恢复 default "balanced"。
-// tier 本身不落 chrome.storage;Stage 2+ 可用 Native Host config 持久化(RPC 启动
-// 时拉一次);当前 MVP 接受 session 级设置 + 持续设置留给后续 ISS。
+// 持久化:tier 存 chrome.storage.local,用于绕开 MV3 popup → SW sendMessage 冷启动抖动。
+// storage 中只保存档位字符串,不含页面原文。
 //
 // `TIER_VALUES` / `TIER_DEFAULT` / `applyTierDecision` 从 `tier-decision.js` 导入,
 // 跟 Node 单测共用同一实现(与 feedback_production_logic_testable 纪律一致)。
@@ -92,6 +93,12 @@ function storageSet(value) {
             }
         });
     });
+}
+
+async function loadStoredTier() {
+    const got = await storageGet({ [TIER_STORAGE_KEY]: TIER_DEFAULT });
+    const tier = got[TIER_STORAGE_KEY];
+    currentTier = TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT;
 }
 
 async function loadCustomSites() {
@@ -148,7 +155,11 @@ function patternForOrigin(origin) {
 async function isProtectedOrigin(origin) {
     const pattern = patternForOrigin(origin);
     if (!pattern) return false;
-    return permissionsContains([pattern]);
+    if (isRequiredHostPattern(pattern)) return true;
+    return Promise.race([
+        permissionsContains([pattern]),
+        new Promise((resolve) => setTimeout(() => resolve(true), 500)),
+    ]);
 }
 
 function isRequiredHostPattern(pattern) {
@@ -159,6 +170,15 @@ function isRequiredHostPattern(pattern) {
     return hostPermissions.includes(pattern);
 }
 
+function isTrustedExtensionSender(sender) {
+    if (!sender) return false;
+    if (sender.id === chrome.runtime.id) return true;
+    if (typeof sender.url === "string" && sender.url.startsWith(`${EXTENSION_ORIGIN}/`)) {
+        return true;
+    }
+    return false;
+}
+
 function unregisterCustomContentScript() {
     return new Promise((resolve) => {
         if (!chrome.scripting || !chrome.scripting.unregisterContentScripts) {
@@ -167,7 +187,12 @@ function unregisterCustomContentScript() {
         }
         chrome.scripting.unregisterContentScripts(
             { ids: [CUSTOM_CONTENT_SCRIPT_ID] },
-            () => resolve(),
+            () => {
+                // Idempotent sync: Chrome sets lastError when the script id has never
+                // been registered. Reading it prevents "Unchecked runtime.lastError".
+                void chrome.runtime.lastError;
+                resolve();
+            },
         );
     });
 }
@@ -579,7 +604,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // popup / options)的消息。manifest 无 externally_connectable,web 页本就无法 sendMessage;
     // 此守门把该信任假设显式化,防止未来误加 externally_connectable 后外部 web 源操纵 tier /
     // 豁免状态。sender.id 由 Chrome 运行时填充,不可由发送方伪造。
-    if (!sender || sender.id !== chrome.runtime.id) return false;
+    if (!isTrustedExtensionSender(sender)) return false;
 
     // α1 基线 + α4 豁免短路:content-script → Host check
     if (msg.type === "vigil_check") {
@@ -590,8 +615,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 ? sender.tab.id
                 : -1;
         isProtectedOrigin(msg.origin)
-            .then((protected) => {
-                if (!protected) {
+            .then((isProtected) => {
+                if (!isProtected) {
                     sendResponse({
                         action: "allow",
                         findings: [],
@@ -731,6 +756,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return false;
         }
         currentTier = next;
+        storageSet({ [TIER_STORAGE_KEY]: currentTier }).catch(() => {});
         sendResponse({ ok: true, tier: currentTier });
         return false;
     }
@@ -751,6 +777,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "local" && changes[CUSTOM_SITES_STORAGE_KEY]) {
         syncCustomContentScripts().catch(() => {});
     }
+    if (areaName === "local" && changes[TIER_STORAGE_KEY]) {
+        const next = changes[TIER_STORAGE_KEY].newValue;
+        currentTier = TIER_VALUES.includes(next) ? next : TIER_DEFAULT;
+    }
 });
 
 if (chrome.permissions && chrome.permissions.onRemoved) {
@@ -763,6 +793,7 @@ if (chrome.permissions && chrome.permissions.onRemoved) {
 
 // ───────────────────────── service worker 生命周期 ─────────────────────────
 
+loadStoredTier().catch(() => {});
 syncCustomContentScripts().catch(() => {});
 
 self.addEventListener("install", () => {
@@ -775,9 +806,11 @@ self.addEventListener("install", () => {
 self.addEventListener("activate", (event) => {
     if (self.clients && typeof self.clients.claim === "function") {
         event.waitUntil(
-            Promise.all([self.clients.claim(), syncCustomContentScripts()]).catch(
-                () => {},
-            ),
+            Promise.all([
+                self.clients.claim(),
+                loadStoredTier(),
+                syncCustomContentScripts(),
+            ]).catch(() => {}),
         );
     }
 });
