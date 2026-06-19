@@ -32,8 +32,11 @@ Vigils 的所有重要变更记录于此。格式遵循
   (#14、#15、#16)
 - **Claude Code turnkey 结果脱敏默认开启**,agent 检测不再漏判"已装未首跑"(经 `PATH` 上的
   `claude` 二进制检测,不仅凭 `~/.claude/`)。(#10、#11)
-- **`setup --all` 与文档不再宣传不存在的 `vigil-hub inspect` 子命令**;改指向 `vigil-hub setup
-  --status`、`vigil-hub demo`、`vigil-hub verify`。
+- **还原 `vigil-hub inspect` 命令**(`protection` / `activity` / `search` / `approvals` /
+  `verify-chain`)。其 CLI 接线在 v0.1.31 被误删(一次无关的 checkpoint-anchor port 连带删除),而实现
+  与 README / 文档引用都还在 —— 照做会撞 "unrecognized subcommand"。现已恢复。(`inspect protection` 的
+  头条计数目前反映 MCP 网关路径;`activity` 事件流则展示包括 hook 路径拦截在内的全部事件。把 `protection`
+  汇总扩展到 hook 路径的归类留作后续跟进。)
 
 ### 文档
 

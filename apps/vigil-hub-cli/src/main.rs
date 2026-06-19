@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 use vigil_hub_cli::demo::{self, DemoArgs};
 use vigil_hub_cli::hook::{self, HookArgs};
+use vigil_hub_cli::inspect::{self, InspectArgs};
 use vigil_hub_cli::posture;
 use vigil_hub_cli::quickstart;
 use vigil_hub_cli::serve::{self, ServeArgs};
@@ -83,6 +84,11 @@ enum Command {
     ///
     /// 用法:`vigil-hub posture show` / `vigil-hub posture set medium`。
     Posture(CliPostureArgs),
+    /// 只读查看 Vigil 拦了什么(基于已持久化审计账本的聚合):protection 汇总 / activity 事件流 /
+    /// search 全文检索 / approvals 队列 / verify-chain 链校验 —— 用过 agent 后"看见保护"。
+    ///
+    /// 用法:`vigil-hub inspect protection` / `vigil-hub inspect activity`。
+    Inspect(InspectArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -369,6 +375,9 @@ fn main() -> std::process::ExitCode {
                 }
             }
         }
+        // 还原 v0.1.31 误删的 inspect 接线(`feat(audit): checkpoint anchor` 从无 inspect 的内部仓
+        // port 时连带删了 Command::Inspect;inspect.rs 实现一直在 + README/docs 仍引用)。
+        Some(Command::Inspect(args)) => inspect::run(args),
         Some(Command::Serve(args)) => {
             // stdio flag 必须显式给,防止用户误以为能默认启 HTTP
             if !args.stdio {

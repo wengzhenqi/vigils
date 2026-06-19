@@ -39,8 +39,12 @@ Codex.
 - **Turnkey result redaction is on by default for Claude Code**, and agent detection no longer misses
   an installed-but-not-yet-run agent (detects the `claude` binary on `PATH`, not only `~/.claude/`).
   (#10, #11)
-- **`setup --all` and the docs no longer advertise a `vigil-hub inspect` subcommand that does not exist**;
-  they point at `vigil-hub setup --status`, `vigil-hub demo`, and `vigil-hub verify`.
+- **Restored the `vigil-hub inspect` command** (`protection` / `activity` / `search` / `approvals` /
+  `verify-chain`). Its CLI wiring was accidentally dropped in v0.1.31 (an unrelated checkpoint-anchor
+  port) while the implementation and its README / docs references remained — so following the docs hit
+  "unrecognized subcommand". It works again. (`inspect protection`'s headline counts currently reflect
+  the MCP-gateway path; the `activity` feed shows all events including hook-path denials. Extending the
+  `protection` summary to categorize hook-path events is tracked as a follow-up.)
 
 ### Documentation
 
