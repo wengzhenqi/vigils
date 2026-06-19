@@ -17,6 +17,9 @@ protection boundary honestly so you can rely on Vigils correctly. Every fix is v
 plus a 33-assertion end-to-end suite against the real binary; the riskiest fix was cross-reviewed by
 Codex.
 
+This release also ships merged community contributions: a desktop UI redesign (#5) and Chrome
+extension updates (#2). Thanks to the contributors.
+
 ### Fixed
 
 - **`setup --status` no longer reports STALE on a custom `--ledger`.** Installing with a custom shared
