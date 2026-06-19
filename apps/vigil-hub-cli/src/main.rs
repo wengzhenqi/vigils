@@ -21,7 +21,7 @@ use vigil_hub_cli::{add_remote, AddRemoteArgs};
 
 /// Vigil Hub CLI(I10b-β:含 `add-remote-mcp`)。
 #[derive(Parser, Debug)]
-#[command(name = "vigil-hub", about = "Vigil Hub local proxy + CLI")]
+#[command(name = "vigil-hub", version, about = "Vigil Hub local proxy + CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -155,11 +155,16 @@ struct CliHookArgs {
     /// 注入 lease 的 TTL(秒)。hook 是 one-shot,mint→resolve 微秒级,短 TTL 即可。默认 300。
     #[arg(long = "inject-ttl-secs", default_value_t = 300)]
     inject_ttl_secs: i64,
+    /// PostToolUse 结果硬指纹 secret 脱敏(#12):把工具结果里的 ghp_/AKIA/sk- 等硬指纹 secret
+    /// 替换为 `[REDACTED <rule>]` 再返回模型 —— **无状态、独立于 `--inject`**(无需声明 secret)。
+    /// 仅 Claude 生效(需 updatedToolOutput);由 `vigil-hub setup` 默认为 Claude 写入。
+    #[arg(long = "redact-results")]
+    redact_results: bool,
 }
 
 #[derive(clap::Args, Debug)]
 struct CliWrapArgs {
-    /// 审计账本路径(默认 `<本机数据目录>/Vigil/ledger.sqlite3`,与 setup/hook/inspect 同一个)。
+    /// 审计账本路径(默认 `<本机数据目录>/Vigil/ledger.sqlite3`,与 setup/hook 同一个)。
     #[arg(long)]
     ledger: Option<PathBuf>,
     /// 该被包裹 server 的稳定身份 id(= agent 配置里的 server 名)。缺省由命令 argv 派生(并警告)。
@@ -415,6 +420,7 @@ fn main() -> std::process::ExitCode {
                 ledger_path: args.ledger,
                 cli: args.cli,
                 injection,
+                redact_results: args.redact_results,
                 ..HookArgs::default()
             };
             let stdin = std::io::stdin();
@@ -609,8 +615,18 @@ fn setup_mcp_dispatch(args: &CliSetupArgs) -> Result<std::process::ExitCode, set
         Ok(code)
     } else if args.apply {
         // 所有面都保护(turnkey:一条命令覆盖用户全部 agent 接入面)。
+        // #16:apply 前先查底层程序在 PATH 是否可解析(apply 后条目变 AlreadyWrapped 不再可查)。
+        let unresolvable = setup_mcp::unresolvable_wrappables(&home);
         let rep = setup_mcp::run_apply(&home, &exe, args.dry_run, args.user_scope_only, monitor)?;
         let mut code = print_mcp_apply(&rep, "apply");
+        // #16:非阻塞 WARN —— 底层程序找不到的 server 仍被 wrap(配置正确),但会在 agent 启动时静默
+        // 失败,故诚实告知(避免"Protected"虚假安全感)。
+        for (name, prog) in &unresolvable {
+            eprintln!(
+                "  WARNING: MCP server '{name}' command '{prog}' not found on PATH; once wrapped it \
+                 will fail when the agent starts it (install it or fix the path in your config)"
+            );
+        }
         code = run_codex_leg(
             setup_mcp::run_codex_apply(&home, &exe, args.dry_run, monitor),
             "apply",
@@ -771,6 +787,16 @@ fn run_verify(ledger: Option<PathBuf>) -> std::process::ExitCode {
         eprintln!("vigil-hub verify: 无法定位审计账本(给 --ledger 或设 VIGIL_LEDGER_PATH)");
         return std::process::ExitCode::FAILURE;
     };
+    // verify 是**只读**审计:账本不存在时诚实报告且**绝不创建**。否则 `Ledger::open` 的 create-if-missing
+    // 会在 typo 的路径上凭空生成一个空账本,再误报"✓ chain internally valid"——给虚假安全感(把"查了个
+    // 不存在的账本"伪装成"审计有效"),还污染文件系统。存在性检查先于 open。
+    if !path.exists() {
+        eprintln!(
+            "vigil-hub verify: 审计账本不存在:{} —— 核对 --ledger 路径(verify 只读,不会创建账本)。",
+            path.display()
+        );
+        return std::process::ExitCode::FAILURE;
+    }
     let ledger = match vigil_audit::Ledger::open(&path) {
         Ok(l) => l,
         Err(e) => {
@@ -1069,7 +1095,7 @@ fn print_setup_all(
     // [1/2] hook(原生工具输入侧 secret 拦截)
     if !hook.claude_detected {
         println!(
-            "  [1/2] hook: Claude Code not detected (~/.claude not found) -- hook step skipped"
+            "  [1/2] hook: Claude Code not detected (claude not on PATH, ~/.claude not found) -- hook step skipped"
         );
     } else if op == "uninstall" {
         let did = if hook.changed {
@@ -1110,7 +1136,7 @@ fn print_setup_all(
         println!("  Vigil protection removed (hook + MCP gateway). Restart your agent.");
     } else {
         println!(
-            "  Protected. Restart your agent to activate. See what Vigil catches: vigil-hub inspect protection"
+            "  Protected. Restart your agent to activate. Confirm: vigil-hub setup --status  ·  See what Vigil catches: vigil-hub demo"
         );
         println!("  Undo everything with: vigil-hub setup --all --uninstall");
     }
@@ -1556,7 +1582,7 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
     // install
     println!("Vigil setup");
     if !r.claude_detected {
-        println!("  Claude Code:   not detected (~/.claude not found)");
+        println!("  Claude Code:   not detected (claude not on PATH, ~/.claude not found)");
         println!("  Nothing to do. Install Claude Code, then re-run `vigil-hub setup`.");
         println!("  (For other agents, use the MCP gateway: `vigil-hub serve --stdio`.)");
         return std::process::ExitCode::SUCCESS;

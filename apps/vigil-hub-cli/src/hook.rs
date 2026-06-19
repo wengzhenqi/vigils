@@ -219,6 +219,10 @@ pub struct HookArgs {
     pub co_approval_wait_secs: Option<u64>,
     /// α2 执行边界注入配置。None = 不注入(默认;占位符落三档姿态决策)。
     pub injection: Option<InjectionConfig>,
+    /// #12:PostToolUse 结果硬指纹 scrub(无状态,独立于 `injection`)。
+    /// true = 把工具结果里的硬指纹 secret(ghp_/AKIA/…)替换为占位符再返回模型(仅 Claude)。
+    /// 默认 false(行为与改前一致);由 `--redact-results` flag 置位,setup 默认为 Claude 写入。
+    pub redact_results: bool,
 }
 
 /// 归一化后的 PreToolUse 事件(多 CLI 字段变体收敛后的统一形状)。
@@ -1435,8 +1439,10 @@ struct RedactReport {
 /// (`ghp_`/`sk-`/`AIza`…),只有用声明的真值在结果里 find-and-replace 回 `secret://<alias>`
 /// 才能捕获 —— 这是**主**机制;`scrub_text` 硬指纹脱敏作纵深防御(兜命令产出的其它 secret)。
 fn try_result_redaction(args: &HookArgs, raw: &Value) -> Option<HookOutcome> {
-    let inj = args.injection.as_ref()?;
-    if !inj.enabled || !cli_supports_updated_input(args.cli) {
+    // injection 启用 → 完整再脱敏(逆替换 + 硬指纹);仅 `--redact-results` 启用 → 硬指纹 scrub only
+    // (无状态、无声明 secret 依赖,独立于 `--inject`;#12)。两者皆未开 → pass-through(零行为回归)。
+    let inj_opt = args.injection.as_ref().filter(|i| i.enabled);
+    if (inj_opt.is_none() && !args.redact_results) || !cli_supports_updated_input(args.cli) {
         return None;
     }
     // 工具名(精确路由)。#3 二次传播兜底:再脱敏面从"仅边界工具"扩到所有 **native** 工具。
@@ -1468,7 +1474,8 @@ fn try_result_redaction(args: &HookArgs, raw: &Value) -> Option<HookOutcome> {
     // 仅**边界工具**解析声明 secret 真值(mint/resolve)做精确逆替换;非边界 native 工具跳过
     // (resolved 空 → redact_boundary_value 只跑硬指纹 scrub,省每结果 N×mint/resolve 开销)。
     let mut resolved: HashMap<String, SecretValue> = HashMap::new();
-    if is_boundary && !inj.secrets.is_empty() {
+    // 仅注入启用 + 边界工具 + 有声明 secret 时解析真值做逆替换;否则 resolved 空 → 硬指纹 scrub only。
+    if let Some(inj) = inj_opt.filter(|i| is_boundary && !i.secrets.is_empty()) {
         // 真值解析结构上需要 ledger(LeaseBroker 经其审计 mint/resolve)。无 ledger → fail-closed 裁剪。
         let Some(path) = args.ledger_path.as_ref() else {
             eprintln!(
@@ -3486,6 +3493,60 @@ mod tests {
             HookOutcome::RedactOutput { updated_output, .. } => updated_output,
             other => panic!("expected RedactOutput, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn redact_results_scrubs_hard_fingerprint_without_injection() {
+        // #12:injection 关、redact_results 开时,PostToolUse 结果里的硬指纹 secret(ghp_/AKIA/…)
+        // 仍被 scrub —— 无需声明 secret/`--inject`(turnkey setup 默认为 Claude 写入 `--redact-results`)。
+        let td = tempfile::TempDir::new().unwrap();
+        let tok = "ghp_0123456789abcdefABCDEF0123456789abcd";
+        let event = json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": { "file_path": "/x/.env" },
+            "tool_response": { "content": format!("token is {tok} end") },
+        });
+        let mut cur = Cursor::new(event.to_string().into_bytes());
+        let args = HookArgs {
+            cli: CliKind::Claude,
+            ledger_path: Some(td.path().join("ledger.sqlite3")),
+            injection: None, // 注入关
+            redact_results: true,
+            ..HookArgs::default()
+        };
+        let out = run(&args, &mut cur);
+        let s = redacted_output(&out).to_string();
+        assert!(
+            !s.contains(tok),
+            "ghp_ token must be scrubbed without --inject, got: {s}"
+        );
+        assert!(
+            s.contains("REDACTED"),
+            "expected a [REDACTED ...] placeholder, got: {s}"
+        );
+    }
+
+    #[test]
+    fn redact_results_off_by_default_is_passthrough() {
+        // 反向守门:injection 关 + redact_results 关(默认)+ 无元指令/哨兵 → Allow(零行为回归)。
+        let tok = "ghp_0123456789abcdefABCDEF0123456789abcd";
+        let event = json!({
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Read",
+            "tool_input": { "file_path": "/x" },
+            "tool_response": { "content": format!("token is {tok} end") },
+        });
+        let mut cur = Cursor::new(event.to_string().into_bytes());
+        let args = HookArgs {
+            cli: CliKind::Claude,
+            ..HookArgs::default() // injection: None, redact_results: false
+        };
+        let out = run(&args, &mut cur);
+        assert!(
+            matches!(out, HookOutcome::Allow),
+            "default must pass through, got: {out:?}"
+        );
     }
 
     #[test]

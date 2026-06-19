@@ -8,6 +8,47 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.0] — 2026-06-20 — 首个正式版:turnkey 健壮性 + 诚实边界
+
+退出 beta 线。本版加固一键接入(`vigil-hub setup`)对真实配置形态的处理,修复一轮真机端到端
+测试(Claude Code + Codex 由真实模型驱动、k8s 隔离)发现的状态报告与审计 bug,并诚实陈述防护
+边界,让你能正确地依赖 Vigils。每个修复都有单测 + 33 断言端到端套件(对真二进制)验证;风险最高
+的修复经 Codex 交叉评审。
+
+### 修复
+
+- **`setup --status` 不再对自定义 `--ledger` 误报 STALE**。用自定义共享 ledger 安装(文档建议的
+  与桌面应用共享审计的方式)后,`setup --status` 会误报 "INSTALLED but STALE / 保护关闭" —— 即便
+  保护有效、自检 PASS —— 且其重跑 `setup` 的提示会把账本悄悄改回默认、切断 GUI 共享。staleness 现
+  与 ledger 路径无关(用户选的路径不算漂移);binary 路径漂移、缺 PostToolUse 注册、缺 flag 仍报
+  STALE。Claude(`settings.json`)与 Codex/Gemini/Cursor(`hooks.json`)两面均修。(#19)
+- **`vigil-hub --version` / `-V` 现能打印版本**,不再报 "unexpected argument"。安全 CLI 连版本都
+  报不出是真实粗糙点(提 bug、核对升级都需要)。(#20)
+- **`vigil-hub verify` 恢复只读**。校验不存在的账本路径会凭空建 221KB 空库(只读审计产生写副作用)
+  再误报 "✓ chain internally valid";现诚实报告账本不存在且不创建。
+- **`setup --mcp` 处理真实 MCP 配置形态**:单串 `command`(`"npx -y pkg /path"`,即 `claude mcp add`
+  写法)拆为 program+args 而非不可运行的单 argv;被 `stdbuf`/`sh`/`env` 前缀包裹的 `vigil-hub wrap`
+  保持原样不二次包装;底层程序不在 `PATH` 的被包装 server 给非阻塞 WARNING 而非虚假 "Protected"。
+  (#14、#15、#16)
+- **Claude Code turnkey 结果脱敏默认开启**,agent 检测不再漏判"已装未首跑"(经 `PATH` 上的
+  `claude` 二进制检测,不仅凭 `~/.claude/`)。(#10、#11)
+- **`setup --all` 与文档不再宣传不存在的 `vigil-hub inspect` 子命令**;改指向 `vigil-hub setup
+  --status`、`vigil-hub demo`、`vigil-hub verify`。
+
+### 文档
+
+- **诚实防护边界**。引言与用户指南现明确陈述 Vigils 能可靠防住什么(13 类指纹的明文凭据泄漏、可逆
+  脱敏、防篡改审计、审批、沙箱)与**防不住**什么(蓄意模型可对 secret 编码/分段、或走 Vigils 未
+  中介的通道绕过输入侧检测)—— 以及出站代理是路线图上的完整堵法。不制造虚假安全感。
+- 修正 agent 接入与 Codex 指引(hook-first 模型;Codex 需 `wire_api=responses`)。
+
+### 验证
+
+- 对新构建的 Linux 二进制跑真机端到端套件(15 组场景、33 断言):内置 `Bash`/`Write`/`Edit` 携裸
+  secret 的 hook 拦截(reason 点名凭据类型且不回显);PostToolUse 结果脱敏;MCP wrap 网关真转发上游
+  tool call + 完整审计;descriptor pinning 漂移 fail-closed;ledger-agnostic 状态;只读 verify;
+  逐字节 uninstall 还原。Workspace 门禁全绿:clippy `-D warnings`、`cargo fmt`、lib 测试。
+
 ## [v0.2.0-beta.9] — 2026-06-16 — 二次传播泄漏加固(非边界工具结果 scrub)
 
 来自同一次结构化项目 review、经 Codex 代码审查确认的安全修复。

@@ -8,6 +8,58 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.0] — 2026-06-20 — First stable release: turnkey robustness, honest scope
+
+Exits the beta line. This release hardens the one-command turnkey onboarding (`vigil-hub setup`)
+against real-world config shapes, fixes status-reporting and audit bugs found by an end-to-end test
+campaign on a real machine (Claude Code + Codex driven by a live model, k8s-isolated), and states the
+protection boundary honestly so you can rely on Vigils correctly. Every fix is verified by unit tests
+plus a 33-assertion end-to-end suite against the real binary; the riskiest fix was cross-reviewed by
+Codex.
+
+### Fixed
+
+- **`setup --status` no longer reports STALE on a custom `--ledger`.** Installing with a custom shared
+  ledger (the documented way to share the audit trail with the desktop app) made `setup --status`
+  report "INSTALLED but STALE / protection off" — even though protection was active and the self-test
+  passed — and the prompt to re-run `setup` would silently reset the ledger to the default, breaking
+  GUI sharing. Staleness is now ledger-agnostic (the user's ledger path is a choice, not drift);
+  binary-path drift, missing PostToolUse registration, and missing flags still report STALE. Both the
+  Claude (`settings.json`) and Codex/Gemini/Cursor (`hooks.json`) legs are fixed. (#19)
+- **`vigil-hub --version` / `-V` now print the version** instead of erroring with "unexpected argument".
+  A security CLI that can't report its version is a real rough edge (bug reports, upgrade checks). (#20)
+- **`vigil-hub verify` is read-only again.** Verifying a non-existent ledger path created a 221 KB empty
+  database as a side effect and then falsely reported "✓ chain internally valid". It now reports the
+  ledger is missing and creates nothing.
+- **`setup --mcp` handles real-world MCP config shapes.** A single-string `command`
+  (`"npx -y pkg /path"`, as `claude mcp add` writes) is split into program + args instead of becoming
+  an unrunnable single argv; a `vigil-hub wrap` nested under a `stdbuf`/`sh`/`env` prefix is left
+  untouched instead of double-wrapped; and a wrapped server whose program isn't on `PATH` now produces
+  a non-blocking WARNING instead of a false "Protected". (#14, #15, #16)
+- **Turnkey result redaction is on by default for Claude Code**, and agent detection no longer misses
+  an installed-but-not-yet-run agent (detects the `claude` binary on `PATH`, not only `~/.claude/`).
+  (#10, #11)
+- **`setup --all` and the docs no longer advertise a `vigil-hub inspect` subcommand that does not exist**;
+  they point at `vigil-hub setup --status`, `vigil-hub demo`, and `vigil-hub verify`.
+
+### Documentation
+
+- **Honest protection boundary.** The introduction and user guide now state plainly what Vigils
+  reliably catches (plaintext credential leaks across 13 fingerprint classes, reversible redaction,
+  tamper-evident audit, approval, sandbox) versus what it does **not** stop (a determined model can
+  evade input-side detection by encoding/chunking a secret or using a channel Vigils doesn't mediate)
+  — and that an egress proxy is the complete fix on the roadmap. No false sense of security.
+- Agent-integration and Codex guidance corrected (hook-first model; Codex needs `wire_api=responses`).
+
+### Verification
+
+- Real-machine end-to-end suite (15 scenario groups, 33 assertions) against the freshly built Linux
+  binary: hook deny for built-in `Bash`/`Write`/`Edit` carrying a bare secret (the reason names the
+  credential type and never echoes it); PostToolUse result scrub; MCP wrap gateway forwarding a real
+  upstream tool call with a full audit trail; descriptor-pinning drift fail-closed; ledger-agnostic
+  status; read-only verify; byte-for-byte uninstall round-trip. Workspace gates green: clippy
+  `-D warnings`, `cargo fmt`, lib tests.
+
 ## [v0.2.0-beta.9] — 2026-06-16 — Second-hop leak hardening (non-boundary result scrub)
 
 A security fix from the same structured project review, confirmed by Codex code review.

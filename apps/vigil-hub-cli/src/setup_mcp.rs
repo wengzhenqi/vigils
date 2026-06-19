@@ -162,6 +162,37 @@ fn classify_one(name: &str, entry: &Value) -> McpServerClass {
             return McpServerClass::AlreadyWrapped { name: name.into() };
         }
 
+        // #15 嵌套 wrap 盲区:历史/手工配置可能被 `stdbuf`/`sh`/`env` 等包装器**前缀**包裹了一个
+        // vigil-hub wrap(`command="stdbuf", args=["-oL","vigil-hub","wrap",...,"--vigil-managed-mcp",...]`)。
+        // 此时 args[0] 不是 "wrap" → 上面 AlreadyWrapped 漏判 → 会被二次 wrap 产生嵌套。精确补判:整 argv
+        // (含 command)里出现 **vigil-hub basename 紧跟 "wrap"** 的相邻 token + sentinel 在场。判为
+        // **Skipped**(非 AlreadyWrapped):Vigil 没写过这种前缀形态、`unwrap_entry` 也只认 args[0]=="wrap",
+        // 故不声称能还原它,只**保证不二次 wrap**(诚实 + fail-safe)。第三方 server 不会有 vigil-hub+wrap
+        // 相邻序列(除非它确在跑 vigil-hub wrap),故不引入漏保护 fail-open。
+        let is_vh_tok = |t: &str| {
+            std::path::Path::new(t)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(|s| {
+                    s.eq_ignore_ascii_case("vigil-hub") || s.eq_ignore_ascii_case("vigil-hub.exe")
+                })
+                .unwrap_or(false)
+        };
+        let argv_tokens: Vec<&str> = std::iter::once(cmd)
+            .chain(args.iter().filter_map(Value::as_str))
+            .collect();
+        if has_sentinel
+            && argv_tokens
+                .windows(2)
+                .any(|w| is_vh_tok(w[0]) && w[1] == "wrap")
+        {
+            return McpServerClass::Skipped {
+                name: name.into(),
+                reason: "appears already wrapped under a wrapper prefix (stdbuf/sh/env...); \
+                         left untouched to avoid double-wrap — unwrap it by hand if needed",
+            };
+        }
+
         // ② Vigil 自己的 server/gateway 条目**绝不 wrap**(会自我嵌套)。
         //    **DEF-002 trigger A 修复**:官方文档把 Vigil 暴露为 MCP server 用的是
         //    `{"command":"vigil-hub","args":["serve",...]}`(args[0]=="serve",非 "wrap"),旧逻辑把它
@@ -249,9 +280,50 @@ fn classify_one(name: &str, entry: &Value) -> McpServerClass {
         .map(|o| o.keys().cloned().collect())
         .unwrap_or_default();
 
+    // #14:`claude mcp add` 可能把整条命令行塞进 `command` 单串、`args` 空(如 "npx -y pkg /path")。
+    // 整串会被当**单一 argv** → execve 找名为 "npx -y ..." 的程序 → ENOENT,server 静默不可用、无 Vigil
+    // 关联提示。args 空且 command 含空白时:无引号 → 按空白拆为 program+args(常见形态,wrap 后正常);
+    // 含引号(带空格的引用参数,形态不确定)→ 诚实跳过,让用户在配置里拆成 command+args 数组。
+    let (command, args): (String, Vec<String>) = if args.is_empty()
+        && command.split_whitespace().nth(1).is_some()
+    {
+        if command.contains('\'') || command.contains('"') {
+            return McpServerClass::Skipped {
+                name: name.into(),
+                reason: "`command` is a single shell string with quotes; split it into a \
+                             `command` + `args` array in your MCP config so Vigil can wrap it",
+            };
+        }
+        let mut parts = command.split_whitespace();
+        let prog = parts.next().unwrap_or(command);
+        // 单串 command 本身就是一次 vigil-hub 调用(wrap/serve/...):此前 has_sentinel 基于**原始**
+        // args(空)算得 false,AlreadyWrapped 与 #15 都漏判;拆分后会把
+        // `vigil-hub wrap ... --vigil-managed-mcp ...` 当普通 server **二次 wrap**(Codex CONFIRM 的幂等
+        // bug)。拆出 program basename 命中 vigil-hub → Skipped:Vigil 没写过这种单串形态、uninstall 也
+        // 认不出(只认 args[0]=="wrap"),故只保证不二次 wrap(诚实 + fail-safe),不声称能还原。
+        if std::path::Path::new(prog)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case("vigil-hub") || s.eq_ignore_ascii_case("vigil-hub.exe"))
+            .unwrap_or(false)
+        {
+            return McpServerClass::Skipped {
+                name: name.into(),
+                reason: "single-string `command` is itself a vigil-hub invocation; not wrapping \
+                             (would double-wrap) — split into command+args explicitly if intended",
+            };
+        }
+        (prog.to_string(), parts.map(String::from).collect())
+    } else {
+        // (c)(Codex CONFIRM):单 token 带前后空白(如 "npx ")走 else 分支,trim 掉,避免拿 "npx "
+        // 当 argv0 执行 ENOENT。trim 只剥首尾、保留路径内部空格;结构化条目的 command 本就无首尾空白
+        // → no-op,不破坏逐字往返。
+        (command.trim().to_string(), args)
+    };
+
     McpServerClass::Wrappable {
         name: name.into(),
-        command: command.into(),
+        command,
         args,
         env_keys,
     }
@@ -624,6 +696,26 @@ impl McpApplyReport {
     pub fn total_changed(&self) -> usize {
         self.changed + self.local_changed
     }
+}
+
+/// #16:列出 user scope 配置里 Wrappable server 中底层程序在宿主 PATH **不可解析**的 `(name, program)`。
+/// 供 `setup --mcp --apply` 后**非阻塞 WARN** —— 避免给"Protected"虚假安全感(底层程序坏/未装时
+/// server 在 agent 启动才静默失败,无 Vigil 关联提示)。必须在 apply **之前**对原始配置调用(apply 后
+/// 条目变 AlreadyWrapped 不再 Wrappable)。复用网关同款 `resolve_program`(SSOT)。
+pub fn unresolvable_wrappables(home: &Path) -> Vec<(String, String)> {
+    let path = claude_json_path(home);
+    let Ok(Some(cfg)) = read_claude_json(&path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for class in classify_user_scope_servers(&cfg) {
+        if let McpServerClass::Wrappable { name, command, .. } = class {
+            if vigil_mcp::stdio::resolve_program(&command).is_err() {
+                out.push((name, command));
+            }
+        }
+    }
+    out
 }
 
 /// `setup --mcp --apply`:读 → wrap **user scope + local scope**(默认两者都保护)→ 原子写。
@@ -1694,6 +1786,136 @@ mod tests {
         assert!(classes
             .iter()
             .any(|c| matches!(c, McpServerClass::AlreadyWrapped { name } if name == "already")));
+    }
+
+    #[test]
+    fn single_string_command_splits_into_program_and_args() {
+        // #14:claude mcp add 的单串 command(空 args)→ 拆为 program+args(无引号),wrap 后正常。
+        let cfg = json!({"mcpServers": {
+            "fs": {"command": "npx -y @modelcontextprotocol/server-filesystem /tmp", "args": []}
+        }});
+        let c = classify_user_scope_servers(&cfg);
+        let w = c
+            .iter()
+            .find(|c| matches!(c, McpServerClass::Wrappable { .. }))
+            .expect("wrappable");
+        if let McpServerClass::Wrappable { command, args, .. } = w {
+            assert_eq!(
+                command, "npx",
+                "single-string command must split into program"
+            );
+            assert_eq!(
+                args,
+                &vec![
+                    "-y".to_string(),
+                    "@modelcontextprotocol/server-filesystem".to_string(),
+                    "/tmp".to_string()
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn single_string_command_with_quotes_is_skipped() {
+        // #14:含引号(带空格引用参数,形态不确定)→ 诚实跳过,不臆测拆分。
+        let cfg = json!({"mcpServers": {
+            "fs": {"command": "npx -y server \"/path with spaces\"", "args": []}
+        }});
+        let c = classify_user_scope_servers(&cfg);
+        assert!(
+            matches!(c[0], McpServerClass::Skipped { .. }),
+            "quoted single-string command must be Skipped, got {:?}",
+            c[0]
+        );
+    }
+
+    #[test]
+    fn wrapper_prefixed_vigil_wrap_is_skipped_not_rewrapped() {
+        // #15:被 stdbuf 前缀包裹的 vigil-hub wrap(args[0]!="wrap")→ Skipped,防二次 wrap 嵌套。
+        let cfg = json!({"mcpServers": {
+            "nested": {
+                "command": "stdbuf",
+                "args": ["-oL", "vigil-hub", "wrap", "--server-id", "fs", "--vigil-managed-mcp", "--", "npx", "x"]
+            }
+        }});
+        let c = classify_user_scope_servers(&cfg);
+        assert!(
+            matches!(c[0], McpServerClass::Skipped { .. }),
+            "wrapper-prefixed vigil-hub wrap must be Skipped (not re-wrapped), got {:?}",
+            c[0]
+        );
+        // 反向守门:仅含 sentinel 但**无** vigil-hub+wrap 相邻序列的第三方 server 仍 Wrappable(不 fail-open)。
+        let cfg2 = json!({"mcpServers": {
+            "thirdparty": {"command": "npx", "args": ["server", "--vigil-managed-mcp"]}
+        }});
+        let c2 = classify_user_scope_servers(&cfg2);
+        assert!(
+            matches!(c2[0], McpServerClass::Wrappable { .. }),
+            "a third-party server merely containing the sentinel must stay Wrappable, got {:?}",
+            c2[0]
+        );
+    }
+
+    #[test]
+    fn unresolvable_wrappables_flags_missing_program() {
+        // #16:Wrappable server 底层程序在 PATH 不可解析 → 被列出(供非阻塞 WARN,避免虚假 Protected)。
+        let td = tempfile::TempDir::new().unwrap();
+        let home = td.path();
+        std::fs::write(
+            home.join(".claude.json"),
+            json!({"mcpServers": {
+                "badprog": {"command": "/nonexistent/vigil-xyz-not-real", "args": ["x"]}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let u = unresolvable_wrappables(home);
+        assert!(
+            u.iter().any(|(n, _)| n == "badprog"),
+            "missing program must be flagged, got {:?}",
+            u
+        );
+    }
+
+    #[test]
+    fn single_string_vigil_invocation_is_skipped_not_double_wrapped() {
+        // #14 hardening(Codex CONFIRM 的幂等 bug):单串 command 内嵌一次 vigil-hub wrap、args 空 →
+        // has_sentinel 基于空 args 为 false,AlreadyWrapped/#15 漏判;拆分后 program 命中 vigil-hub →
+        // Skipped,绝不二次 wrap。
+        let cfg = json!({"mcpServers": {
+            "selfwrap": {"command": "vigil-hub wrap --server-id x --vigil-managed-mcp -- npx y", "args": []}
+        }});
+        let c = classify_user_scope_servers(&cfg);
+        assert!(
+            matches!(c[0], McpServerClass::Skipped { .. }),
+            "single-string vigil-hub wrap must be Skipped (no double-wrap), got {:?}",
+            c[0]
+        );
+        // 单串 vigil-hub serve(网关自身)同理 → Skipped(否则 wrap 包住自己的 serve)。
+        let cfg2 = json!({"mcpServers": {
+            "selfserve": {"command": "/usr/local/bin/vigil-hub serve --stdio", "args": []}
+        }});
+        let c2 = classify_user_scope_servers(&cfg2);
+        assert!(
+            matches!(c2[0], McpServerClass::Skipped { .. }),
+            "single-string vigil-hub serve must be Skipped, got {:?}",
+            c2[0]
+        );
+    }
+
+    #[test]
+    fn single_token_command_with_trailing_space_is_trimmed() {
+        // (c)(Codex CONFIRM):单 token 带尾随空白 → else 分支 trim,不拿 "npx " 当 argv0 执行 ENOENT。
+        let cfg = json!({"mcpServers": {"t": {"command": "npx ", "args": []}}});
+        let c = classify_user_scope_servers(&cfg);
+        if let McpServerClass::Wrappable { command, .. } = &c[0] {
+            assert_eq!(
+                command, "npx",
+                "trailing space must be trimmed from single-token command"
+            );
+        } else {
+            panic!("expected Wrappable, got {:?}", c[0]);
+        }
     }
 
     #[test]
