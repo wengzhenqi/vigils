@@ -8,13 +8,12 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
-## [v0.2.1-rc.3] — 2026-06-21 — ML 脱敏 CLI 变体发布 + 真机验证修复
+## [v0.2.1] — 2026-06-21 — ML 脱敏 CLI 变体 + 真机验证修复
 
-把可选的 ML 脱敏引擎作为预构建 release 产物提供,并修复两个只有三平台真机验证才能暴露的 bug。
-**候选版。** rc.1–rc.3 的 release run 加固了新的 ML 发布流水线:ML Linux 腿现从 PyPI JSON API 取
-onnxruntime wheel URL 并带 SHA-256 校验(ubuntu runner 的 python 无 pip 可解的 1.24.4 wheel ——
-`pip download` 只看到 1.23.2),以及一个预存的 Tauri Rust/npm 版本漂移(npm `@tauri-apps/api` 2.10
-落后于 Rust `tauri` 2.11,由早先一次 `cargo update` 引入)已对齐到 2.11,让 desktop 包重新能构建。
+发布可选的 ML 脱敏引擎作为预构建 release 产物(`vigils-cli-ml-<plat>`),与默认硬指纹 CLI 并存,
+并修复两个只有三平台真机验证才能暴露的 bug。ML CLI 变体及其模型下载路径已在真实 Linux / macOS /
+Windows 硬件上端到端验证(onnxruntime 1.24 dylib `dlopen` + 真 PII/DeBERTa 推理);已发布的
+`vigils-cli-ml-windows-x64` 与 `vigils-cli-ml-linux-x64` 产物在发布后又做了复测。
 
 ### 新增
 
