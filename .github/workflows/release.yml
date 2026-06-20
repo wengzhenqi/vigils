@@ -221,6 +221,123 @@ jobs:
         with:
           subject-path: dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
 
+  # ── 2b. CLI ML 变体（3 平台,--features ort + 捆 onnxruntime 1.24.4 dylib）──────
+  # 加性资产:**不动**默认硬指纹件(cli job)。ML 变体 = vigil-hub --features ort + exe 同目录
+  # onnxruntime 1.24.4 dylib(运行期 prepare_ort_dylib_path 自动 dlopen)。用户
+  # `vigil-hub serve --engine ml` 首跑按需下载 OpenAI PII + DeBERTa 模型(HF 主源 + vigils.ai
+  # 镜像 fallback)。资产名 vigils-cli-ml-<plat>,与默认 vigils-cli-<plat> 并存。
+  # ★ 真机验证(2026-06-21):Linux x64 / macOS arm64 / Windows x64 三平台 onnxruntime 1.24.4
+  #   dylib dlopen + 真 PII/DeBERTa 推理全绿。glibc 地板:ML Linux 由 onnxruntime manylinux_2_28
+  #   wheel 决定 ≈ 2.28(高于默认件 zigbuild 的 2.17 —— ML 为可选高级件,可接受);macOS 需 14+
+  #   (wheel macosx_14_0)。zigbuild 仍把 vigil-hub 二进制本身的 glibc 符号下沉到 2.17(不额外抬高地板)。
+  cli-ml:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04,   plat: linux-x64,   archive: tar.gz, bindir: "target/x86_64-unknown-linux-gnu/release" }
+          - { os: macos-latest,   plat: macos-arm64, archive: tar.gz, bindir: "target/release" }
+          - { os: windows-latest, plat: windows-x64, archive: zip,    bindir: "target/release" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux deps (keyring / secret-service)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config libssl-dev
+
+      - name: Install zig + cargo-zigbuild (Linux glibc floor)
+        if: runner.os == 'Linux'
+        run: |
+          pip3 install ziglang==0.13.0
+          cargo install cargo-zigbuild --version 0.19.8 --locked
+
+      # vigil-hub --features ort(ort load-dynamic:编译期不链 dylib,运行期 dlopen)。仅 vigil-hub
+      # (ML 用于 serve/firewall;vigil-native-host 是浏览器 native messaging,与 ML 无关,不打包)。
+      - name: Build vigil-hub --features ort (Linux — zigbuild glibc 2.17 floor)
+        if: runner.os == 'Linux'
+        run: cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17 --features ort --bin vigil-hub -p vigil-hub-cli
+      - name: Build vigil-hub --features ort (macOS / Windows — native)
+        if: runner.os != 'Linux'
+        run: cargo build --release --features ort --bin vigil-hub -p vigil-hub-cli
+
+      # onnxruntime 1.24.4 native dylib(ort api-24 ABI 必须 1.24.x)。从 PyPI wheel 提取:GitHub
+      # runner 自带 python,pip download 自动取 runner 平台对应 wheel;wheel 内 capi/ 下的 native lib
+      # 与 cp 标签无关。过滤排除 pybind11/cpython python 绑定,只取 onnxruntime 运行库。
+      - name: Fetch onnxruntime 1.24.4 dylib (PyPI wheel)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip download onnxruntime==1.24.4 --no-deps --only-binary=:all: -d ort-wheel
+          cd ort-wheel
+          python -c "import zipfile,os,glob; z=zipfile.ZipFile(glob.glob('onnxruntime-1.24.4-*.whl')[0]); [open(os.path.basename(n),'wb').write(z.read(n)) for n in z.namelist() if 'capi/' in n and not n.endswith('/') and any(e in n for e in ('.so','.dylib','.dll')) and 'pybind11' not in n and 'cpython' not in n]"
+          ls -la
+
+      # vigil-hub + onnxruntime 主库 → mlpkg/,dylib 用 prepare_ort_dylib_path 期望的 exe 同目录
+      # 规范名(win onnxruntime.dll / mac libonnxruntime.dylib / linux libonnxruntime.so)。
+      - name: Stage ML payload (binary + exe-adjacent dylib)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p mlpkg
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "${{ matrix.bindir }}/vigil-hub.exe" mlpkg/
+            cp ort-wheel/onnxruntime.dll mlpkg/
+            cp ort-wheel/onnxruntime_providers_shared.dll mlpkg/ 2>/dev/null || true
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            cp "${{ matrix.bindir }}/vigil-hub" mlpkg/
+            cp ort-wheel/libonnxruntime.*.dylib mlpkg/libonnxruntime.dylib
+          else
+            cp "${{ matrix.bindir }}/vigil-hub" mlpkg/
+            cp ort-wheel/libonnxruntime.so.* mlpkg/libonnxruntime.so
+          fi
+          ls -la mlpkg
+
+      - name: Package ML (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -e
+          mkdir -p dist
+          tar -C mlpkg -czf "dist/vigils-cli-ml-${{ matrix.plat }}.tar.gz" .
+      - name: Package ML (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "mlpkg/*" -DestinationPath "dist/vigils-cli-ml-${{ matrix.plat }}.zip"
+
+      - name: Checksum ML (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          set -e
+          cd dist
+          shasum -a 256 "vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}" > "vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}.sha256"
+      - name: Checksum ML (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $f = "vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}"
+          $h = (Get-FileHash -Algorithm SHA256 "dist/$f").Hash.ToLower()
+          Set-Content -Path "dist/$f.sha256" -Value "$h  $f" -Encoding ascii
+
+      - name: Upload ML to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.tag }}
+          files: |
+            dist/vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}
+            dist/vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}.sha256
+
+      - name: Attest build provenance (ML CLI)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}
+
   # ── 3. 桌面安装包（3 平台,Tauri bundle）─────────────────────────────
   desktop:
     needs: create-release
