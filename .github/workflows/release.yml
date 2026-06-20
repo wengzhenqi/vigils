@@ -86,7 +86,8 @@ jobs:
             printf '%s\n' '- **Browser extension** (guard pasting/typing secrets into AI web apps, Chrome MV3): `vigils-chrome-extension.zip` — unzip, then load unpacked at `chrome://extensions`.'
             printf '%s\n\n' '- The `.sig` and `Vigils.app.tar.gz` files are desktop auto-updater artifacts — you do not need to download them.'
             printf '%s\n\n' 'New here? Full setup & agent-integration guide: https://duncatzat.github.io/vigils'
-            printf '%s\n\n' 'Early releases are unsigned; your OS may show a Gatekeeper / SmartScreen prompt on first run.'
+            printf '%s\n' 'Every asset carries **Sigstore build provenance** (SLSA) — verify any download came from this repo'"'"'s official CI with:'
+            printf '%s\n\n' '`gh attestation verify <file> --repo duncatzat/vigils`. (Not yet OS-code-signed — Authenticode/notarization — so your OS may still show a Gatekeeper / SmartScreen prompt on first run.)'
             printf '%s\n' 'Apache-2.0 · https://vigils.ai · [Full changelog](https://github.com/duncatzat/vigils/blob/main/CHANGELOG.md)'
           } >> "$notes"
           echo "path=$notes" >> "$GITHUB_OUTPUT"
