@@ -19,13 +19,15 @@ instant startup:
 | private_key | PEM block |
 | ... | 13 kinds total |
 
-## Layer 2 — ONNX model (opt-in; **not in default release builds**)
+## Layer 2 — ONNX model (opt-in: the ML release build, or `--features ort`)
 
-> ⚠️ **Honest boundary:** **the binaries you download from Releases run Layer 1 (hard
-> fingerprints) only.** The Layer 2 ML model requires (1) a binary built with `--features ort`,
+> ⚠️ **Honest boundary:** **the _default_ `vigils-cli-<plat>` build runs Layer 1 (hard
+> fingerprints) only.** Layer 2 (the ML model) needs (1) an ort-enabled binary — either the
+> prebuilt **`vigils-cli-ml-<plat>`** release build or your own `cargo build --features ort`,
 > (2) `vigil-hub serve --engine ml` (or `auto`) at runtime, and (3) the model files (fetched on
-> first use; sizeable). If any is missing, behavior falls back to Layer 1 — see the table below
-> and ADR 0022.
+> first use; ~0.8–1.5 GB, Hugging Face + vigils.ai mirror, SHA-256 verified). If any is missing,
+> behavior falls back to Layer 1 — see the table below and ADR 0022. The ML release build bundles
+> the ONNX Runtime 1.24 dylib and floors at Linux glibc ≥ 2.28 / macOS ≥ 14.
 
 OpenAI Privacy Filter (PII NER) + a DeBERTa prompt-injection classifier (soft signal); ort
 builds additionally carry a multilingual ensemble (`xlmr` / `yonigo`). Typical latency: cold

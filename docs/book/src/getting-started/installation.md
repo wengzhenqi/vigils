@@ -67,7 +67,13 @@ Cursor / Zed):
 
 - **Prebuilt**: download `vigils-cli-<target>.tar.gz` (or `.zip` on Windows) from the
   release — it contains `vigil-hub` and `vigil-native-host`.
-- **From source**: `cargo install --path apps/vigil-hub-cli`
+- **ML variant**: download `vigils-cli-ml-<target>` instead for the optional ML redaction
+  engine (OpenAI PII NER + DeBERTa prompt-injection classifier). It bundles the ONNX
+  Runtime 1.24 dylib next to `vigil-hub`; run `vigil-hub serve --engine ml` and the model
+  files are fetched on first run (~0.8–1.5 GB, Hugging Face primary + vigils.ai mirror
+  fallback, SHA-256 verified). See [Privacy Filter](../concepts/privacy-filter.md) for
+  `--engine` selection and the ML build's platform floors (Linux glibc ≥ 2.28, macOS ≥ 14).
+- **From source**: `cargo install --path apps/vigil-hub-cli` (add `--features ort` for ML)
 
 ```bash
 vigil-hub serve --stdio    # MCP agent entry point

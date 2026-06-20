@@ -111,9 +111,28 @@ Or grab a pre-built installer / binary for **Windows, macOS, or Linux** from any
 
 | Platform | Desktop app | CLI |
 |---|---|---|
-| **Windows** | `.exe` (NSIS) / `.msi` | `vigil-hub.exe` (in `vigils-cli-…-windows-msvc.zip`) |
-| **macOS** | `.dmg` | `vigil-hub` (in `vigils-cli-…-apple-darwin.tar.gz`) |
-| **Linux** | `.AppImage` / `.deb` / `.rpm` | `vigil-hub` (in `vigils-cli-…-linux-gnu.tar.gz`) |
+| **Windows** | `.exe` (NSIS) / `.msi` | `vigil-hub.exe` (in `vigils-cli-windows-x64.zip`) |
+| **macOS** | `.dmg` | `vigil-hub` (in `vigils-cli-macos-arm64.tar.gz`) |
+| **Linux** | `.AppImage` / `.deb` / `.rpm` | `vigil-hub` (in `vigils-cli-linux-x64.tar.gz`) |
+
+### Two redaction engines: hard-fingerprint (default) or ML
+
+Both CLI builds run the identical firewall / audit / approval core — they differ only in the **redaction engine** that strips secrets and PII before text reaches a model, a log, or the screen:
+
+| Build | Release asset | Redaction | First-run cost |
+|---|---|---|---|
+| **Default** — hard-fingerprint | `vigils-cli-<plat>` | 13+ structured credential & PII classes via fixed-pattern rules — deterministic, instant, no model | none |
+| **ML** | `vigils-cli-ml-<plat>` | The above **plus** an OpenAI PII NER model + a DeBERTa prompt-injection classifier — broader, semantic PII (names, addresses, dates) and soft injection signals | bundles the ONNX Runtime dylib; fetches ~0.8–1.5 GB of models on first `--engine ml` run |
+
+The two **coexist** — the engine is chosen per launch, so a single ML build serves any mode:
+
+```bash
+vigil-hub serve --engine hardfp   # fingerprint rules only (what the default build does)
+vigil-hub serve --engine ml       # strict ML: fetches models on first run, fails closed if unavailable
+vigil-hub serve --engine auto     # ML only if models are already cached and the dylib is present; otherwise degrades to hardfp and never downloads
+```
+
+Models are fetched from Hugging Face (primary) with a [vigils.ai](https://vigils.ai) mirror fallback, each verified by SHA-256 (fail-closed). The ML build bundles [ONNX Runtime](https://onnxruntime.ai) 1.24 next to `vigil-hub`. Platform floors for the **ML** build: **Linux glibc ≥ 2.28**, **macOS ≥ 14** — the default hard-fingerprint build has neither. _(ML builds ship from the next release onward; an earlier release may not include them yet.)_
 
 > Early releases aren't OS-code-signed yet; your OS may show a Gatekeeper / SmartScreen prompt
 > on first run — they're still independently verifiable (see below, or the full

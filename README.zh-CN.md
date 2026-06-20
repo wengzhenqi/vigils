@@ -108,9 +108,28 @@ Linux** 的预构建安装包与二进制:
 
 | 平台 | 桌面应用 | CLI |
 |---|---|---|
-| **Windows** | `.exe`(NSIS)/ `.msi` | `vigil-hub.exe`(在 `vigils-cli-…-windows-msvc.zip` 内) |
-| **macOS** | `.dmg` | `vigil-hub`(在 `vigils-cli-…-apple-darwin.tar.gz` 内) |
-| **Linux** | `.AppImage` / `.deb` / `.rpm` | `vigil-hub`(在 `vigils-cli-…-linux-gnu.tar.gz` 内) |
+| **Windows** | `.exe`(NSIS)/ `.msi` | `vigil-hub.exe`(在 `vigils-cli-windows-x64.zip` 内) |
+| **macOS** | `.dmg` | `vigil-hub`(在 `vigils-cli-macos-arm64.tar.gz` 内) |
+| **Linux** | `.AppImage` / `.deb` / `.rpm` | `vigil-hub`(在 `vigils-cli-linux-x64.tar.gz` 内) |
+
+### 两种脱敏引擎:硬指纹(默认)或 ML
+
+两个 CLI 构建跑的是完全相同的防火墙 / 审计 / 审批内核 —— 唯一区别在于文本抵达模型、日志或屏幕*之前*剥离密钥与 PII 的**脱敏引擎**:
+
+| 构建 | Release 资产 | 脱敏 | 首跑成本 |
+|---|---|---|---|
+| **默认** —— 硬指纹 | `vigils-cli-<plat>` | 13+ 类结构化凭据与 PII,固定模式规则 —— 确定性、即时、零模型 | 无 |
+| **ML** | `vigils-cli-ml-<plat>` | 在上述基础上**外加** OpenAI PII NER 模型 + DeBERTa 提示注入分类器 —— 更广的语义 PII(人名、地址、日期)与软注入信号 | 捆 ONNX Runtime dylib;首次 `--engine ml` 运行按需下载 ~0.8–1.5 GB 模型 |
+
+二者**并存** —— 引擎按启动选择,单个 ML 构建即可服务任意模式:
+
+```bash
+vigil-hub serve --engine hardfp   # 仅硬指纹规则(默认构建的行为)
+vigil-hub serve --engine ml       # 严格 ML:首跑下载模型,不可用则 fail-closed 拒启
+vigil-hub serve --engine auto     # 仅当模型已缓存且 dylib 就位才启用 ML;否则降级硬指纹,绝不下载
+```
+
+模型从 Hugging Face(主源)拉取,带 [vigils.ai](https://vigils.ai) 镜像 fallback,逐文件 SHA-256 校验(fail-closed)。ML 构建把 [ONNX Runtime](https://onnxruntime.ai) 1.24 捆在 `vigil-hub` 同目录。**ML** 构建的平台地板:**Linux glibc ≥ 2.28**、**macOS ≥ 14** —— 默认硬指纹构建则没有。_(ML 构建从下一个 release 起提供;更早的 release 可能尚未包含。)_
 
 > 早期版本未签名;首次运行时系统可能弹出 Gatekeeper / SmartScreen 提示。
 
