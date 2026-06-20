@@ -8,6 +8,37 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.1-rc.1] — 2026-06-21 — ML 脱敏 CLI 变体发布 + 真机验证修复
+
+把可选的 ML 脱敏引擎作为预构建 release 产物提供,并修复两个只有三平台真机验证才能暴露的 bug。
+**候选版** —— 为在正式 v0.2.1 前演练新的 ML 构建/发布 job 而切。
+
+### 新增
+
+- **ML CLI 变体 —— `vigils-cli-ml-<plat>`(Linux x64 / macOS arm64 / Windows x64)。** 与默认硬指纹
+  `vigils-cli-<plat>` 并存的第二个 CLI 构建,以 `--features ort` 构建,并把 ONNX Runtime 1.24 动态库
+  捆在 `vigil-hub` 同目录。运行 `vigil-hub serve --engine ml`(或 `auto`)即在硬指纹规则之上叠加
+  OpenAI PII NER 模型 + DeBERTa 提示注入分类器;模型首跑按需下载(~0.8–1.5 GB,Hugging Face 主源 +
+  vigils.ai 镜像 fallback,SHA-256 校验)。两引擎并存(按启动选择)。已在真实 Linux / macOS / Windows
+  硬件验证(dylib dlopen + 真 PII/DeBERTa 推理)。每个资产同默认 CLI 一样带 `.sha256` + Sigstore
+  构建溯源。ML 构建平台地板:Linux glibc ≥ 2.28、macOS ≥ 14。
+
+### 修复
+
+- **模型下载不再在"不支持 HTTP Range 的镜像"上损坏文件。** 16-chunk 并发下载器假设服务端返
+  `206 Partial Content`;经 Cloudflare 的镜像对 JSON 做 gzip,对 Range 请求返 `200`(全量),于是每个
+  worker 把整文件写进自己的分块槽 → 组装成 16× 损坏 → SHA-256 不匹配。仅 HF 被屏蔽、走 vigils.ai
+  镜像 fallback 的用户中招(Hugging Face 永远返 206)。下载器现会探测 Range 支持,镜像不支持时改为
+  单流下载。
+- **ML smoke 覆盖不再硬断言一个已知且搁置的多语种 gap。** per-label 覆盖测试与精度/召回基准共用
+  fixture(已膨胀到 90+ zh/ja/ko/de/it/fr 样本),硬断言了英文中心模型本不应具备的多语种 PII 覆盖;
+  现改为只对受支持范围门控,并将多语种召回转为报告。
+
+### 文档
+
+- README(en + zh)与 mdBook 新增"两种脱敏引擎"说明(默认 vs ML、`--engine` 用法、首跑模型下载、
+  平台地板);并修正安装表中的 CLI 资产命名。
+
 ## [v0.2.0] — 2026-06-20 — 首个正式版:turnkey 健壮性 + 诚实边界
 
 退出 beta 线。本版加固一键接入(`vigil-hub setup`)对真实配置形态的处理,修复一轮真机端到端

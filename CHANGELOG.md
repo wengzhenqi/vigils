@@ -8,6 +8,42 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.1-rc.1] — 2026-06-21 — ML redaction CLI variant shipped + real-machine validation fixes
+
+Makes the optional ML redaction engine available as a prebuilt release artifact, and fixes two bugs
+that only a 3-platform real-hardware validation pass could surface. **Release candidate** — cut to
+exercise the new ML build/release job before a stable v0.2.1.
+
+### Added
+
+- **ML CLI variant — `vigils-cli-ml-<plat>` (Linux x64 / macOS arm64 / Windows x64).** A second CLI
+  build alongside the default hard-fingerprint `vigils-cli-<plat>`, built with `--features ort` and
+  bundling the ONNX Runtime 1.24 dynamic library next to `vigil-hub`. Run `vigil-hub serve --engine ml`
+  (or `auto`) to add an OpenAI PII NER model + a DeBERTa prompt-injection classifier on top of the
+  fingerprint rules; the models are fetched on first run (~0.8–1.5 GB, Hugging Face primary + vigils.ai
+  mirror fallback, SHA-256 verified). The two engines coexist (chosen per launch). Validated on real
+  Linux / macOS / Windows hardware (dylib dlopen + real PII/DeBERTa inference). Each asset carries
+  `.sha256` + Sigstore build provenance like the default CLI. ML build floors: Linux glibc ≥ 2.28,
+  macOS ≥ 14.
+
+### Fixed
+
+- **Model download no longer corrupts files on mirrors that don't honor HTTP Range.** The 16-chunk
+  parallel downloader assumed `206 Partial Content`; a Cloudflare-fronted mirror gzip-compresses JSON
+  and returns `200` (full body) to range requests, so every worker wrote the whole file into its chunk
+  slot → 16×-corrupt assembly → SHA-256 mismatch. Only HF-blocked users on the vigils.ai mirror
+  fallback hit this (Hugging Face always returns 206). The downloader now probes range support and
+  streams the file in a single request when a mirror doesn't honor ranges.
+- **ML smoke coverage no longer asserts a known, parked multilingual gap.** The per-label coverage
+  test shared a fixture with the precision/recall benchmark (grown to 90+ zh/ja/ko/de/it/fr samples)
+  and hard-asserted multilingual PII coverage the English-centric model isn't expected to deliver; it
+  now gates on in-scope coverage and reports multilingual recall instead.
+
+### Docs
+
+- README (en + zh) and the mdBook gain a "two redaction engines" explanation (default vs ML, `--engine`
+  usage, first-run model download, platform floors); corrected the CLI asset names in the install table.
+
 ## [v0.2.0] — 2026-06-20 — First stable release: turnkey robustness, honest scope
 
 Exits the beta line. This release hardens the one-command turnkey onboarding (`vigil-hub setup`)
