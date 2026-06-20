@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use reqwest::blocking::Client;
-use reqwest::header::{CONTENT_LENGTH, ETAG, IF_NONE_MATCH, RANGE};
+use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, ETAG, IF_NONE_MATCH, RANGE};
 use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 
@@ -140,24 +140,35 @@ pub fn download_with_chunks(
             continue;
         }
 
-        // 3. 16-chunk 并发 GET Range
+        // 3. 下载策略选择(byte-range 支持探测)。
+        //    16-chunk 并发依赖 server 对 Range 返 206 Partial Content。但 CF/nginx 会对
+        //    `application/json` 这类 Content-Type 做 on-the-fly 压缩/动态处理 → 压缩响应不可
+        //    range → server 对 Range 请求返 **200 全量**。16 worker 各拿全量会写出 16× 损坏
+        //    → sha256 mismatch。真机镜像 fallback 验证暴露(vigils.ai tokenizer.json)。
+        //    故先探测:支持 range → 16-chunk;否则单流(reqwest 自解压得正确字节)。
         let _ = client; // 主 client 不复用,每 worker 自建(避免跨线程共享 Client 的复杂性)
-        match download_all_chunks(url, target_dir, expected_size, chunk_count) {
-            Ok(()) => {}
-            Err(e) => {
-                last_err = format!("download chunks from {url}: {e}");
-                // 失败时清掉这个 URL 产出的 .partial.*(避免污染下一 URL)
+        if url_supports_ranges(url) {
+            match download_all_chunks(url, target_dir, expected_size, chunk_count) {
+                Ok(()) => {}
+                Err(e) => {
+                    last_err = format!("download chunks from {url}: {e}");
+                    // 失败时清掉这个 URL 产出的 .partial.*(避免污染下一 URL)
+                    let _ = super::verify::cleanup_partials(target_dir);
+                    continue;
+                }
+            }
+
+            // 4. 串接 .partial.0..N → final_path(此处不做 sha256;由 caller 调 verify)
+            if let Err(e) = super::verify::assemble_chunks(target_dir, chunk_count, file_name) {
+                last_err = format!("assemble chunks: {e}");
                 let _ = super::verify::cleanup_partials(target_dir);
                 continue;
             }
-        }
-
-        // 4. 串接 .partial.0..N → final_path(此处不做 sha256;由 caller 调 verify)
-        match super::verify::assemble_chunks(target_dir, chunk_count, file_name) {
-            Ok(_) => {}
-            Err(e) => {
-                last_err = format!("assemble chunks: {e}");
-                let _ = super::verify::cleanup_partials(target_dir);
+        } else {
+            // 单流 GET → final_path(不分块)。caller 仍做整文件 sha256 校验,损坏即 fail-closed。
+            if let Err(e) = download_single_stream(url, &final_path) {
+                last_err = format!("single-stream from {url}: {e}");
+                let _ = fs::remove_file(&final_path);
                 continue;
             }
         }
@@ -217,6 +228,74 @@ fn head_probe(client: &Client, url: &str) -> Result<(u64, Option<String>), reqwe
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     Ok((len, etag))
+}
+
+/// byte-range 支持探测:`GET Range: bytes=0-0` + `Accept-Encoding: identity`。
+///
+/// 返 `true` 仅当 server 返 **206 Partial Content**(真支持 range)。任何非 206
+/// (尤其 CF 对压缩/动态资源返 200 全量)→ `false` → caller 走单流,避免 16-chunk
+/// 对不可 range 资源的 16× 全量损坏。`identity` 避免 server gzip 后再无视 range。
+/// 探测自身出错也返 `false`(单流恒安全;真不可达由后续单流/HEAD 暴露)。
+fn url_supports_ranges(url: &str) -> bool {
+    let client = match build_client(HEAD_TIMEOUT) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client
+        .get(url)
+        .header(RANGE, "bytes=0-0")
+        .header(ACCEPT_ENCODING, "identity")
+        .send()
+    {
+        Ok(resp) => resp.status() == StatusCode::PARTIAL_CONTENT,
+        Err(_) => false,
+    }
+}
+
+/// 单流下载:`GET url` → 流式写 `final_path`(不经 `.partial` 分块)。
+///
+/// 用于 server 不支持 byte-range 的 mirror(CF 压缩 JSON 等 [`url_supports_ranges`] 返 false)。
+/// 允许默认编码:reqwest 解压后落盘即正确字节;sha256 由 caller 整文件校验。流式 `copy_to`
+/// 避免把 ~800 MB weights 全读进内存。timeout 给足(900s)兼顾慢线大文件单流。
+fn download_single_stream(url: &str, final_path: &Path) -> Result<(), BootstrapError> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(900))
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| BootstrapError::DownloadFailed {
+            url: url.to_string(),
+            status: 0,
+            source: e,
+        })?;
+    let mut resp = client
+        .get(url)
+        .send()
+        .map_err(|e| BootstrapError::DownloadFailed {
+            url: url.to_string(),
+            status: 0,
+            source: e,
+        })?;
+    let status = resp.status();
+    if !status.is_success() {
+        let status_code = status.as_u16();
+        return Err(BootstrapError::DownloadFailed {
+            url: url.to_string(),
+            status: status_code,
+            // 非 2xx → error_for_status 必返 Err(与 fetch_chunk_once 同惯用法)
+            source: resp.error_for_status().unwrap_err(),
+        });
+    }
+    let mut f = File::create(final_path).map_err(|e| BootstrapError::DiskFull {
+        path: final_path.to_path_buf(),
+        source: e,
+    })?;
+    resp.copy_to(&mut f)
+        .map_err(|e| BootstrapError::DownloadFailed {
+            url: url.to_string(),
+            status: status.as_u16(),
+            source: e,
+        })?;
+    Ok(())
 }
 
 /// 试用 If-None-Match 探测 304。
@@ -333,9 +412,13 @@ fn fetch_chunk_once(
         source: e,
     })?;
     let range_val = format!("bytes={start}-{end_incl}");
+    // Accept-Encoding: identity 必须与 url_supports_ranges 探测一致 —— 否则探测(identity)
+    // 见 206、实际 chunk(默认编码)若被 server 压缩成 200/压缩-206 即损坏或失败。同 header
+    // 保证"探测判定可 range"对实际下载成立(Codex review FIX-REQUIRED)。
     let resp = client
         .get(url)
         .header(RANGE, &range_val)
+        .header(ACCEPT_ENCODING, "identity")
         .send()
         .map_err(|e| BootstrapError::DownloadFailed {
             url: url.to_string(),
@@ -343,13 +426,25 @@ fn fetch_chunk_once(
             source: e,
         })?;
     let status = resp.status();
-    // 接受 206 Partial Content(标准 Range 响应)与 200 OK(server 不支持 Range 时返完整)
-    if !status.is_success() && status != StatusCode::PARTIAL_CONTENT {
+    // 严格只接受 206 Partial Content。200 = server 无视 Range 返全量(CF 压缩/动态资源);
+    // 接受它会把整文件写进单个 .partial.<idx> → 16-chunk 组装 16× 损坏(真机镜像 fallback
+    // 验证 tokenizer.json 暴露)。正常流由 download_file 的 url_supports_ranges 预探测把不可
+    // range 资源路由到单流;此处严格化兜底:rangeable URL 某 chunk 中途翻车也立即失败,不污染。
+    if status != StatusCode::PARTIAL_CONTENT {
         let status_code = status.as_u16();
-        return Err(BootstrapError::DownloadFailed {
-            url: url.to_string(),
-            status: status_code,
-            source: resp.error_for_status().unwrap_err(),
+        // 4xx/5xx 有 reqwest::Error 源;200(无视 range)无错误源 → NetworkUnreachable 表达
+        if let Err(src) = resp.error_for_status() {
+            return Err(BootstrapError::DownloadFailed {
+                url: url.to_string(),
+                status: status_code,
+                source: src,
+            });
+        }
+        return Err(BootstrapError::NetworkUnreachable {
+            tried_urls: vec![url.to_string()],
+            last_error: format!(
+                "url={url} 对 Range 返 {status_code}(非 206);mirror 不支持 byte-range"
+            ),
         });
     }
     let bytes = resp.bytes().map_err(|e| BootstrapError::DownloadFailed {
