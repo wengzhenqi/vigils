@@ -273,9 +273,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip download onnxruntime==1.24.4 --no-deps --only-binary=:all: -d ort-wheel
+          # ubuntu runner 只有 python3(无 python alias);mac/win 有 python。取存在者。
+          PY=$(command -v python || command -v python3)
+          "$PY" -m pip download onnxruntime==1.24.4 --no-deps --only-binary=:all: -d ort-wheel
           cd ort-wheel
-          python -c "import zipfile,os,glob; z=zipfile.ZipFile(glob.glob('onnxruntime-1.24.4-*.whl')[0]); [open(os.path.basename(n),'wb').write(z.read(n)) for n in z.namelist() if 'capi/' in n and not n.endswith('/') and any(e in n for e in ('.so','.dylib','.dll')) and 'pybind11' not in n and 'cpython' not in n]"
+          "$PY" -c "import zipfile,os,glob; z=zipfile.ZipFile(glob.glob('onnxruntime-1.24.4-*.whl')[0]); [open(os.path.basename(n),'wb').write(z.read(n)) for n in z.namelist() if 'capi/' in n and not n.endswith('/') and any(e in n for e in ('.so','.dylib','.dll')) and 'pybind11' not in n and 'cpython' not in n]"
           ls -la
 
       # vigil-hub + onnxruntime 主库 → mlpkg/,dylib 用 prepare_ort_dylib_path 期望的 exe 同目录
