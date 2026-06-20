@@ -4,7 +4,7 @@
 
 - **Action firewall** (`Firewall::evaluate`) — fail-closed effect gating
 - **Audit ledger** (SHA-256 hash chain) — tamper-evident decision history
-- **Privacy filter** (hard-fingerprint rules + optional ONNX-backed PII detection)
+- **Privacy filter** — hard-fingerprint rules (always on) + *optional* ONNX PII/injection model (opt-in via `--engine ml|auto`; **not in default release builds** — see [Privacy Filter](./concepts/privacy-filter.md))
 - **MCP hub** (Model Context Protocol server registry + descriptor pinning)
 - **Approval queue** (human-in-the-loop for risky effects)
 - **Sandbox runner** (Wasm + native, Linux Landlock LSM)
