@@ -90,6 +90,7 @@ pub fn run(args: &WrapArgs) -> Result<(), ServeError> {
         // 注入分类器仅 serve 直跑 opt-in;wrap turnkey 不默认拉 738MB 模型(用户可改用 serve 直跑)。
         enable_injection_classifier: false,
         redact_tool_results: true, // 可逆脱敏:结果里的 secret 回模型前再脱敏(网关核心价值)
+        ml_best_effort: false,     // turnkey wrap = 硬指纹底座;ML 走 `serve --engine ml|auto`
         monitor: args.monitor,     // opt-in 非阻塞观察(turnkey 无 GUI resolver 时)
         // DEF-004:边界根缺省 CWD(wrap 由 agent 在项目目录启动)。
         project_roots: serve::resolve_project_roots(&args.project_roots),

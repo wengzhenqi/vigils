@@ -112,6 +112,14 @@ pub struct ServeArgs {
     ///
     /// **软信号铁律**:命中只 bump session risk + 审计,**绝不** deny。
     pub enable_injection_classifier: bool,
+
+    /// ADR 0022 `--engine auto`:**best-effort ML**。`true` 时 ML 引擎只用**本地已缓存**模型
+    /// (`model_cached` / `injection_model_cached`,**绝不**触发下载),且 init 失败 / 缓存缺失
+    /// → **降级硬指纹**(warn,不 fail-closed 拒启)。`false`(`ml` / legacy)= 严格:
+    /// `ensure_*` 可下载 + 缺失/失败 fail-closed 拒启。**硬指纹底座两种模式都常开**。
+    /// 注:真 init *hang*(loader-lock)仍由 `run_ort_init_with_timeout` 的 `abort()` 兜底
+    /// (ADR 0022 D7;auto 探测要求 dylib 就位已挡掉纯缺失,残留仅"存在但版本错"的罕见情形)。
+    pub ml_best_effort: bool,
 }
 
 /// DEF-004:把 CLI `--project-root` 解析成 [`ServeArgs::project_roots`]。
@@ -138,6 +146,249 @@ pub fn resolve_project_roots(cli_roots: &[PathBuf]) -> Vec<String> {
             .iter()
             .map(|p| vigil_firewall::extract::normalize_project_root(p))
             .collect()
+    }
+}
+
+// ───────────────────────── ADR 0022:引擎选择(hardfp / ml / auto)─────────────────────────
+
+/// 用户面引擎选择三态(`--engine <hardfp|ml|auto>`)。
+///
+/// 不改 merge 语义(ADR 0013);只决定 **ML 层是否运行**。硬指纹脱敏在三态下**始终常开**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum EngineMode {
+    /// 仅硬指纹(默认):正则脱敏常开,完全不加载 ML 模型 / onnxruntime。
+    /// = 当前发行二进制的实际行为(离线、确定性、零模型依赖)。
+    Hardfp,
+    /// 严格 ML:启用 OpenAI PII + DeBERTa 注入分类器。缺 feature/模型/dylib → **拒绝启动**
+    /// (保留既有 fail-closed:明确要 ML 就必须知道它是否可用,绝不静默裸奔)。
+    Ml,
+    /// 自动:**仅当**模型已本地缓存且 onnxruntime dylib 就位时启用 ML;否则降级硬指纹 + warn。
+    /// 永不触发大文件下载,永不进入 loader-lock 卡死路径(ADR 0022 D4)。
+    Auto,
+}
+
+/// [`resolve_engine_selection`] 的纯输出:两引擎开关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineSelection {
+    /// → [`ServeArgs::enable_privacy_filter`]
+    pub enable_privacy_filter: bool,
+    /// → [`ServeArgs::enable_injection_classifier`]
+    pub enable_injection_classifier: bool,
+}
+
+/// ADR 0022 纯决策函数(无 IO,进默认测试矩阵守门 —— feedback_production_logic_testable)。
+///
+/// - `engine`:`--engine` 显式值;`None` = 未传(legacy 路径,由裸 `--enable-*` 决定)。
+/// - `ort_compiled`:`cfg!(feature = "ort")`(由 caller 传入,便于测试两侧)。
+/// - `pf_ready` / `ic_ready`:auto 探测结果(模型已缓存 + dylib 就位);仅 `Auto` 使用。
+/// - `bare_privacy` / `bare_injection`:裸 `--enable-privacy-filter` / `--enable-injection-classifier`。
+///
+/// 决策:
+/// - `None`(legacy):严格沿用裸开关(与 ADR 0022 前行为逐字节一致)。
+/// - `Hardfp`:两关(若同时给裸开关,由 caller 打 conflict warn,取保守)。
+/// - `Ml`:两开(严格;`ort_compiled`/`ready` 不影响决策,缺失由下游 fail-closed 处理)。
+/// - `Auto`:ort 未编译 → 两关(静默硬指纹);ort 编译 → 各引擎按 `ready` 探测开关。
+pub fn resolve_engine_selection(
+    engine: Option<EngineMode>,
+    ort_compiled: bool,
+    pf_ready: bool,
+    ic_ready: bool,
+    bare_privacy: bool,
+    bare_injection: bool,
+) -> EngineSelection {
+    match engine {
+        None => EngineSelection {
+            enable_privacy_filter: bare_privacy,
+            enable_injection_classifier: bare_injection,
+        },
+        Some(EngineMode::Hardfp) => EngineSelection {
+            enable_privacy_filter: false,
+            enable_injection_classifier: false,
+        },
+        Some(EngineMode::Ml) => EngineSelection {
+            enable_privacy_filter: true,
+            enable_injection_classifier: true,
+        },
+        Some(EngineMode::Auto) if ort_compiled => EngineSelection {
+            enable_privacy_filter: pf_ready,
+            enable_injection_classifier: ic_ready,
+        },
+        // Auto on a non-ort build:ML 从未编译进来 → 静默硬指纹(默认发行件的本来形态)。
+        Some(EngineMode::Auto) => EngineSelection {
+            enable_privacy_filter: false,
+            enable_injection_classifier: false,
+        },
+    }
+}
+
+/// CLI → [`EngineSelection`] 解析(含 `auto` 的真实只读探测 + stderr 提示)。
+///
+/// `From<CliServeArgs>` 调用。探测**只读 fs**(模型已缓存 + dylib 就位),不下载、不调任何
+/// ort API(避免 loader-lock hang;ADR 0022 D4)。
+pub fn resolve_engine_args(
+    engine: Option<EngineMode>,
+    bare_privacy: bool,
+    bare_injection: bool,
+) -> EngineSelection {
+    let ort_compiled = cfg!(feature = "ort");
+
+    // auto 探测:模型已本地缓存 + dylib 就位才算 ready(仅 auto 探测;其它模式不触 fs)。
+    let (pf_ready, ic_ready) = match engine {
+        Some(EngineMode::Auto) => probe_ml_ready(),
+        _ => (false, false),
+    };
+
+    // 冲突提示:`--engine hardfp` 同时给了裸 `--enable-*` → 取保守(hardfp),stderr 说明(ADR 0022 §4 Q1)。
+    if engine == Some(EngineMode::Hardfp) && (bare_privacy || bare_injection) {
+        eprintln!(
+            "vigil-hub: --engine hardfp overrides --enable-privacy-filter / \
+             --enable-injection-classifier (conservative: ML stays off)"
+        );
+    }
+
+    let sel = resolve_engine_selection(
+        engine,
+        ort_compiled,
+        pf_ready,
+        ic_ready,
+        bare_privacy,
+        bare_injection,
+    );
+
+    // auto 降级可观测:请求了 auto 但某引擎未 ready → stderr 说明走硬指纹(ADR 0022 D4)。
+    if engine == Some(EngineMode::Auto) {
+        if !ort_compiled {
+            eprintln!(
+                "vigil-hub: --engine auto on a non-ort build → hard-fingerprint only \
+                 (rebuild with `--features ort` to enable the ML privacy filter)"
+            );
+        } else {
+            if !sel.enable_privacy_filter {
+                eprintln!(
+                    "vigil-hub: --engine auto → privacy-filter model not cached or onnxruntime \
+                     dylib missing; running hard-fingerprint only (use `--engine ml` to fetch)"
+                );
+            }
+            if !sel.enable_injection_classifier {
+                eprintln!(
+                    "vigil-hub: --engine auto → injection-classifier model not cached or dylib \
+                     missing; injection detection off"
+                );
+            }
+        }
+    }
+    sel
+}
+
+/// `auto` 只读探测:两套模型各自是否已本地缓存,且 onnxruntime dylib 就位。
+/// **不**下载、**不**调用任何 ort API(纯 fs 检查,避免 loader-lock hang)。
+#[cfg(feature = "ort")]
+fn probe_ml_ready() -> (bool, bool) {
+    let dylib = ort_dylib_ready();
+    let pf = dylib && vigil_redaction::model_cached(None).is_some();
+    let ic = dylib && vigil_redaction::injection_model_cached(None).is_some();
+    (pf, ic)
+}
+
+/// 非 ort build:ML 从未编译进来,探测恒 `(false, false)`。
+#[cfg(not(feature = "ort"))]
+fn probe_ml_ready() -> (bool, bool) {
+    (false, false)
+}
+
+/// onnxruntime dylib 是否就位:用户已显式设 `ORT_DYLIB_PATH`,或 exe 同目录有合理大小(>1MB)
+/// 的 dylib。**纯只读,无 `set_var` 副作用**(探测期不可改 env —— 见 `build_hub_with_config`
+/// 的 set_var 时序不变量)。
+#[cfg(feature = "ort")]
+fn ort_dylib_ready() -> bool {
+    std::env::var_os("ORT_DYLIB_PATH").is_some() || exe_local_dylib_candidate().is_some()
+}
+
+/// exe 同目录的 onnxruntime dylib 候选(存在且 >1MB)。纯只读;`prepare_ort_dylib_path` 与
+/// `ort_dylib_ready` 共用此判定(SSOT,避免大小启发式漂移)。
+#[cfg(feature = "ort")]
+fn exe_local_dylib_candidate() -> Option<PathBuf> {
+    let dylib_name = if cfg!(target_os = "windows") {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
+    };
+    let candidate = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join(dylib_name)))?;
+    // 大小启发式:真 ORT ~10-15MB;排除 System32 KB 级 stub / 0 字节占位。
+    if candidate
+        .metadata()
+        .map(|m| m.len() > 1_000_000)
+        .unwrap_or(false)
+    {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod engine_selection_tests {
+    use super::{resolve_engine_selection as r, EngineMode, EngineSelection};
+
+    fn sel(pf: bool, ic: bool) -> EngineSelection {
+        EngineSelection {
+            enable_privacy_filter: pf,
+            enable_injection_classifier: ic,
+        }
+    }
+
+    #[test]
+    fn legacy_none_uses_bare_flags() {
+        // None = --engine 未传 → 逐字节沿用裸开关(ADR 0022 前行为)。
+        assert_eq!(r(None, true, false, false, false, false), sel(false, false));
+        assert_eq!(r(None, true, false, false, true, false), sel(true, false));
+        assert_eq!(r(None, false, false, false, true, true), sel(true, true));
+    }
+
+    #[test]
+    fn hardfp_forces_both_off_ignoring_bare() {
+        assert_eq!(
+            r(Some(EngineMode::Hardfp), true, true, true, true, true),
+            sel(false, false)
+        );
+    }
+
+    #[test]
+    fn ml_forces_both_on_regardless_of_compile_or_ready() {
+        // 严格:决策恒两开;缺 feature/模型由下游 fail-closed 处理,不在本纯函数。
+        assert_eq!(
+            r(Some(EngineMode::Ml), false, false, false, false, false),
+            sel(true, true)
+        );
+    }
+
+    #[test]
+    fn auto_on_non_ort_is_silent_hardfp() {
+        assert_eq!(
+            r(Some(EngineMode::Auto), false, true, true, false, false),
+            sel(false, false)
+        );
+    }
+
+    #[test]
+    fn auto_on_ort_follows_per_engine_readiness() {
+        assert_eq!(
+            r(Some(EngineMode::Auto), true, true, true, false, false),
+            sel(true, true)
+        );
+        assert_eq!(
+            r(Some(EngineMode::Auto), true, false, false, false, false),
+            sel(false, false)
+        );
+        // 各引擎独立:PII 就位、注入未就位。
+        assert_eq!(
+            r(Some(EngineMode::Auto), true, true, false, false, false),
+            sel(true, false)
+        );
     }
 }
 
@@ -299,26 +550,8 @@ fn prepare_ort_dylib_path() {
     if std::env::var_os("ORT_DYLIB_PATH").is_some() {
         return; // 尊重用户显式指定
     }
-    let dylib_name = if cfg!(target_os = "windows") {
-        "onnxruntime.dll"
-    } else if cfg!(target_os = "macos") {
-        "libonnxruntime.dylib"
-    } else {
-        "libonnxruntime.so"
-    };
-    let candidate = match std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join(dylib_name)))
-    {
-        Some(c) => c,
-        None => return,
-    };
-    // 大小启发式:真 ORT ~10-15MB;排除 System32 KB 级 stub / 0 字节占位。
-    if candidate
-        .metadata()
-        .map(|m| m.len() > 1_000_000)
-        .unwrap_or(false)
-    {
+    // SSOT:与 `ort_dylib_ready`(auto 探测)共用 exe-local 候选判定(>1MB 启发式),避免漂移。
+    if let Some(candidate) = exe_local_dylib_candidate() {
         std::env::set_var("ORT_DYLIB_PATH", &candidate);
         eprintln!(
             "vigil-hub serve: ORT_DYLIB_PATH = {} (exe-local; avoids system stub dll; \
@@ -459,35 +692,92 @@ pub fn build_hub_with_config(
     //
     // 不走 OnceLock / Lazy 的理由:启动期一次性 from_env() 失败立即退出更易诊断,
     // 也避免首请求 cold-start latency 暴露给 agent。
-    let firewall = if args.enable_privacy_filter {
+    // ADR 0022:先解析 ML scanner(`Some`=启用 / `None`=硬指纹),再统一建 firewall。
+    //   - 严格(`ml` / legacy,`ml_best_effort=false`):`ensure_model_available` 可下载;模型
+    //     缺失 / init 失败 → fail-closed 拒启(感知"已启用"但未生效是安全事故)。
+    //   - best-effort(`--engine auto`,`ml_best_effort=true`):只用**本地已缓存**模型
+    //     (`model_cached`,**绝不**下载;消除 TOCTOU 重下载窗口);缓存缺失 / init 失败(可捕获)
+    //     → 降级硬指纹 + warn(D6)。真 init *hang* 仍由 `run_ort_init_with_timeout` `abort()`
+    //     兜底(D7;auto 探测已要求 dylib 就位,残留仅"存在但版本错"的罕见情形)。
+    let ort_scanner: Option<Arc<dyn vigil_firewall::PiiScanner>> = if args.enable_privacy_filter {
         #[cfg(feature = "ort")]
         {
-            // v0.5 P2 ADR 0012:模型 first-run-download。失败 fail-closed,绝不静默降级
-            // NoopEngine —— 用户感知"已启用 Privacy Filter"但实际未生效是安全事故。
-            // 内部并发 16 chunk byte-range,sha256 校验,ETag 304 短路。
-            let model_paths = vigil_redaction::ensure_model_available(None)
-                .map_err(ServeError::BootstrapFailed)?;
-            // 桥接到既有 OrtEngine::from_env 接口(env var SSOT;不改 from_env 签名)
-            std::env::set_var("VIGIL_PRIVACY_FILTER_MODEL_DIR", model_paths.dir());
-            eprintln!(
-                "vigil-hub serve: model bootstrap = ok (sha256 verified, dir={})",
-                model_paths.dir().display()
-            );
-
-            // 优化问题 B(H-1):privacy filter 的 ort init 与 injection 同样可能 hang 在错误
-            // onnxruntime.dll 的 LoadLibrary;经共享 `run_ort_init_with_timeout` 套上同款超时 /
-            // panic 兜底,补齐此前的不对称缺口(此前此处直接同步 init,无任何兜底)。
-            let scanner = run_ort_init_with_timeout(
-                "privacy filter",
-                vigil_firewall::ort_scanner_arc_from_env,
-            )
-            .map_err(|o| match o {
-                OrtInitOutcome::Failed(e) => ServeError::PrivacyFilterInit(e),
-                OrtInitOutcome::Panicked => ServeError::OrtInitPanicked {
-                    what: "privacy filter",
-                },
-            })?;
-            // 启动 banner:stderr 一行标识当前 PiiScanner 类型,运维可观测
+            let model_dir = if args.ml_best_effort {
+                vigil_redaction::model_cached(None).map(|p| p.dir().to_path_buf())
+            } else {
+                // v0.5 P2 ADR 0012:first-run-download(16 chunk byte-range + sha256 + ETag 304)。
+                Some(
+                    vigil_redaction::ensure_model_available(None)
+                        .map_err(ServeError::BootstrapFailed)?
+                        .dir()
+                        .to_path_buf(),
+                )
+            };
+            match model_dir {
+                None => {
+                    // best-effort + 模型未缓存 → 降级硬指纹(绝不触发下载)。
+                    eprintln!(
+                        "vigil-hub serve: --engine auto: privacy-filter model not cached; \
+                         hard-fingerprint only"
+                    );
+                    None
+                }
+                Some(dir) => {
+                    // 桥接到既有 OrtEngine::from_env 接口(env var SSOT;不改 from_env 签名)。
+                    std::env::set_var("VIGIL_PRIVACY_FILTER_MODEL_DIR", &dir);
+                    eprintln!(
+                        "vigil-hub serve: privacy model ready (dir={})",
+                        dir.display()
+                    );
+                    // 共享 `run_ort_init_with_timeout`:真超时 → `abort()`(loader-lock 安全);
+                    // Failed/Panicked → 严格 fail-closed,或 best-effort 降级硬指纹。
+                    match run_ort_init_with_timeout(
+                        "privacy filter",
+                        vigil_firewall::ort_scanner_arc_from_env,
+                    ) {
+                        Ok(scanner) => Some(scanner),
+                        Err(o) if args.ml_best_effort => {
+                            let reason = match o {
+                                OrtInitOutcome::Failed(e) => format!("init failed: {e}"),
+                                OrtInitOutcome::Panicked => "init worker panicked".to_string(),
+                            };
+                            eprintln!(
+                                "vigil-hub serve: --engine auto: privacy filter {reason}; \
+                                 degrading to hard-fingerprint only"
+                            );
+                            None
+                        }
+                        Err(OrtInitOutcome::Failed(e)) => {
+                            return Err(ServeError::PrivacyFilterInit(e))
+                        }
+                        Err(OrtInitOutcome::Panicked) => {
+                            return Err(ServeError::OrtInitPanicked {
+                                what: "privacy filter",
+                            })
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(not(feature = "ort"))]
+        {
+            // flag on 但未编译 ort:严格 → fail-closed 拒启;best-effort → 降级硬指纹。
+            if args.ml_best_effort {
+                eprintln!(
+                    "vigil-hub serve: --engine auto on a non-ort build: privacy filter \
+                     unavailable; hard-fingerprint only"
+                );
+                None
+            } else {
+                return Err(ServeError::PrivacyFilterUnavailable);
+            }
+        }
+    } else {
+        None
+    };
+    let firewall: Arc<Firewall> = match ort_scanner {
+        Some(scanner) => {
+            // 启动 banner:stderr 一行标识当前 PiiScanner 类型,运维可观测。
             eprintln!("vigil-hub serve: PiiScanner = ort (T0 Privacy Filter active)");
             Arc::new(vigil_firewall::Firewall::with_scanner(
                 ledger.clone(),
@@ -496,17 +786,13 @@ pub fn build_hub_with_config(
                 scanner,
             ))
         }
-        #[cfg(not(feature = "ort"))]
-        {
-            // fail-closed:flag on 但二进制未编译 ort feature
-            return Err(ServeError::PrivacyFilterUnavailable);
+        None => {
+            eprintln!(
+                "vigil-hub serve: PiiScanner = noop \
+                 (hard-fingerprint redaction active; ML privacy filter off)"
+            );
+            Arc::new(Firewall::new(ledger.clone(), policy, firewall_config))
         }
-    } else {
-        eprintln!(
-            "vigil-hub serve: PiiScanner = noop \
-             (default; pass --enable-privacy-filter + build with --features ort to activate)"
-        );
-        Arc::new(Firewall::new(ledger.clone(), policy, firewall_config))
     };
 
     // 3. DescriptorOracle —— ledger-backed,call 时实时查 descriptor 状态(取代早期静态
@@ -555,35 +841,77 @@ pub fn build_hub_with_config(
     if args.enable_injection_classifier {
         #[cfg(feature = "ort")]
         {
-            // 独立 manifest(deberta-injection-v2/ 目录)→ ensure 三件套(并发 16 chunk + sha256)。
-            let model_paths = vigil_redaction::ensure_injection_model_available(None)
-                .map_err(ServeError::BootstrapFailed)?;
-            // 优化问题 B:from_model_dir 内部触发 ort dlopen + Session 创建 —— 若系统误加载了
-            // 错误版本 onnxruntime.dll 会静默 hang。经共享 `run_ort_init_with_timeout`(工作线程
-            // + 主线程 timeout)把真超时转 abort(loader-lock 安全)、worker panic 转清晰
-            // fail-closed 报错。warmup 一并纳入超时窗口。
-            let dir = model_paths.dir().to_path_buf();
-            let classifier = run_ort_init_with_timeout("injection classifier", move || {
-                vigil_redaction::InjectionClassifier::from_model_dir(&dir).inspect(|c| {
-                    let _ = c.warmup(); // graph optimize / kernel JIT cold-path 前移到启动期
-                })
-            })
-            .map_err(|o| match o {
-                OrtInitOutcome::Failed(e) => ServeError::InjectionClassifierInit(e),
-                OrtInitOutcome::Panicked => ServeError::OrtInitPanicked {
-                    what: "injection classifier",
-                },
-            })?;
-            eprintln!(
-                "vigil-hub serve: InjectionClassifier = deberta (warm; dir={})",
-                model_paths.dir().display()
-            );
-            hub_inner = hub_inner.with_injection_classifier(Arc::new(classifier));
+            // best-effort(auto):只用本地已缓存(无下载);严格(ml/legacy)走 ensure(可下载)。
+            let model_dir = if args.ml_best_effort {
+                vigil_redaction::injection_model_cached(None).map(|p| p.dir().to_path_buf())
+            } else {
+                // 独立 manifest(deberta-injection-v2/ 目录)→ ensure 三件套(16 chunk + sha256)。
+                Some(
+                    vigil_redaction::ensure_injection_model_available(None)
+                        .map_err(ServeError::BootstrapFailed)?
+                        .dir()
+                        .to_path_buf(),
+                )
+            };
+            match model_dir {
+                None => {
+                    // best-effort + 模型未缓存 → 注入检测 off(绝不下载;软信号缺位不破 fail-safe)。
+                    eprintln!(
+                        "vigil-hub serve: --engine auto: injection-classifier model not cached; \
+                         injection detection off"
+                    );
+                }
+                Some(dir) => {
+                    // from_model_dir 内部 ort dlopen + Session;错误 dll 静默 hang → 共享
+                    // `run_ort_init_with_timeout`(真超时 abort loader-lock 安全;panic 转清晰报错)。
+                    // warmup 一并纳入超时窗口。
+                    let banner_dir = dir.clone();
+                    let init = run_ort_init_with_timeout("injection classifier", move || {
+                        vigil_redaction::InjectionClassifier::from_model_dir(&dir).inspect(|c| {
+                            let _ = c.warmup(); // graph optimize / kernel JIT cold-path 前移到启动期
+                        })
+                    });
+                    match init {
+                        Ok(classifier) => {
+                            eprintln!(
+                                "vigil-hub serve: InjectionClassifier = deberta (warm; dir={})",
+                                banner_dir.display()
+                            );
+                            hub_inner = hub_inner.with_injection_classifier(Arc::new(classifier));
+                        }
+                        Err(o) if args.ml_best_effort => {
+                            let reason = match o {
+                                OrtInitOutcome::Failed(e) => format!("init failed: {e}"),
+                                OrtInitOutcome::Panicked => "init worker panicked".to_string(),
+                            };
+                            eprintln!(
+                                "vigil-hub serve: --engine auto: injection classifier {reason}; \
+                                 injection detection off"
+                            );
+                        }
+                        Err(OrtInitOutcome::Failed(e)) => {
+                            return Err(ServeError::InjectionClassifierInit(e))
+                        }
+                        Err(OrtInitOutcome::Panicked) => {
+                            return Err(ServeError::OrtInitPanicked {
+                                what: "injection classifier",
+                            })
+                        }
+                    }
+                }
+            }
         }
         #[cfg(not(feature = "ort"))]
         {
-            // fail-closed:flag on 但二进制未编译 ort feature。
-            return Err(ServeError::InjectionClassifierUnavailable);
+            // flag on 但未编译 ort:严格 → fail-closed 拒启;best-effort → 注入检测 off。
+            if args.ml_best_effort {
+                eprintln!(
+                    "vigil-hub serve: --engine auto on a non-ort build: injection \
+                     classifier unavailable; injection detection off"
+                );
+            } else {
+                return Err(ServeError::InjectionClassifierUnavailable);
+            }
         }
     } else {
         eprintln!(

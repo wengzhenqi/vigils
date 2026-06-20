@@ -334,17 +334,30 @@ struct CliServeArgs {
     /// flag off → 不加载。命中只 bump risk + 审计,绝不 deny。
     #[arg(long = "enable-injection-classifier")]
     enable_injection_classifier: bool,
+    /// ADR 0022:引擎选择 `--engine <hardfp|ml|auto>`。省略 = legacy(由裸 `--enable-*` 决定)。
+    /// `hardfp`=仅硬指纹(默认发行件行为);`ml`=严格启用 ML(缺 feature/模型/dylib 则拒启);
+    /// `auto`=仅当模型已缓存 + onnxruntime dylib 就位才启用 ML,否则降级硬指纹(永不触发下载)。
+    #[arg(long, value_enum)]
+    engine: Option<serve::EngineMode>,
 }
 
 impl From<CliServeArgs> for ServeArgs {
     fn from(c: CliServeArgs) -> Self {
+        // ADR 0022:把 --engine + 裸 --enable-* 解析成最终两开关(`auto` 含只读 fs 探测,不下载)。
+        let sel = serve::resolve_engine_args(
+            c.engine,
+            c.enable_privacy_filter,
+            c.enable_injection_classifier,
+        );
         ServeArgs {
             ledger_path: c.ledger,
             upstreams_config: c.upstream_config,
             auto_approve_first_seen: c.auto_approve_first_seen,
             dev_permissive_firewall: c.dev_permissive_firewall,
-            enable_privacy_filter: c.enable_privacy_filter,
-            enable_injection_classifier: c.enable_injection_classifier,
+            enable_privacy_filter: sel.enable_privacy_filter,
+            enable_injection_classifier: sel.enable_injection_classifier,
+            // ADR 0022:auto = best-effort(只用本地缓存模型,缺失/init 失败降级硬指纹,绝不下载)。
+            ml_best_effort: matches!(c.engine, Some(serve::EngineMode::Auto)),
             redact_tool_results: c.redact_tool_results,
             // `serve` 子命令保持既有 enforce(default-deny + 阻塞审批);monitor 是 wrap turnkey 专用。
             monitor: false,

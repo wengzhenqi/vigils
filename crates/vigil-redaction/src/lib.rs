@@ -98,7 +98,8 @@ pub use ensemble::EngineAttribution;
 pub mod bootstrap;
 #[cfg(feature = "ort")]
 pub use bootstrap::{
-    ensure_injection_model_available, ensure_model_available, BootstrapError, ModelPaths,
+    ensure_injection_model_available, ensure_model_available, injection_model_cached, model_cached,
+    BootstrapError, ModelPaths,
 };
 
 // `scan_text_with_engine`:`scan_text` 的引擎注入版,行为保留 EmptyInput +
