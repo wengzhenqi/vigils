@@ -551,63 +551,28 @@ impl Hub {
     /// 启发式 always-on 兜底。改为与 descriptor 扫描**同款双检测器结构**,补齐这条平行扫描点的
     /// 不对称缺口。
     fn audit_result_injection(&self, invocation: &ToolInvocation, result_text: &str) {
-        // CPU 放大防护:启发式正则 + tokenizer 都对全文 O(n);注入指令通常在开头 → cap 16KB 前缀。
-        let scan = injection_scan_prefix(result_text);
-
-        // 检测器 1:启发式元指令正则(always-on,确定性、窄覆盖)。
-        let heuristic_hits = vigil_redaction::scan_meta_instructions(scan).len();
-        // 检测器 2:DeBERTa(feature gate;无 ort 恒 None → 退化为纯启发式,与 descriptor 扫描一致)。
+        // ADR 0023:组装作业 → DeBERTa 在场则**带外**扫描(主路径不等 738MB 推理),否则同步兜底。
+        // 扫描 / 审计 / risk 语义全在 `finish_injection_audit`,两条路径逐字节一致。
+        let job = InjectionJob {
+            session_id: invocation.session_id.clone(),
+            text: result_text.to_string(),
+            kind: InjectionJobKind::Result {
+                invocation_id: invocation.invocation_id.clone(),
+                server_id: invocation.server_id.clone(),
+                tool_name: invocation.tool_name.clone(),
+            },
+        };
         #[cfg(feature = "ort")]
-        let deberta_score = self.injection_classify_opt(result_text);
-        #[cfg(not(feature = "ort"))]
-        let deberta_score: Option<f32> = None;
-        let deberta_hit = matches!(deberta_score, Some(s) if s >= INJECTION_CLASSIFIER_THRESHOLD);
-
-        // 两检测器都未命中 → 静默(软信号 fail-safe;常态零噪声)。
-        if heuristic_hits == 0 && !deberta_hit {
+        if let Some(classifier) = &self.injection_classifier {
+            dispatch_injection_async(Arc::clone(&self.ledger), Arc::clone(classifier), job);
             return;
         }
-
-        // 软信号 risk delta:两层针对**同一段 result**,取 max 不累加(对齐 descriptor 扫描)。
-        let risk_delta = {
-            let h = if heuristic_hits > 0 {
-                vigil_redaction::META_INSTRUCTION_RISK_DELTA as i64
-            } else {
-                0
-            };
-            let d = if deberta_hit {
-                INJECTION_CLASSIFIER_RISK_DELTA
-            } else {
-                0
-            };
-            h.max(d)
-        };
-
-        if risk_delta > 0 {
-            let _ = self
-                .ledger
-                .bump_session_risk(&invocation.session_id, risk_delta);
-        }
-        let _ = self.ledger.append_event(
-            &invocation.session_id,
-            "tool_result.injection_suspected",
-            &json!({
-                "invocation_id": invocation.invocation_id,
-                "server_id": invocation.server_id,
-                "tool_name": invocation.tool_name,
-                // 零回显:启发式命中数 + deberta 概率(2 位)/命中 + result sha 前缀,绝不带原文。
-                "heuristic_hits": heuristic_hits,
-                "deberta_score": deberta_score.map(round2),
-                "deberta_hit": deberta_hit,
-                "risk_delta": risk_delta,
-                "signal": "soft",
-                "result_sha256_prefix": sha256_hex_prefix(scan),
-            }),
-            Some(&format!(
-                "result_injection_suspected server:{} tool:{} heuristic:{} deberta_hit:{}",
-                invocation.server_id, invocation.tool_name, heuristic_hits, deberta_hit
-            )),
-        );
+        // 同步兜底:非-ort(启发式-only)/ ort 但未 load classifier(deberta 恒 None)。
+        #[cfg(feature = "ort")]
+        let deberta_score = self.injection_classify_opt(&job.text);
+        #[cfg(not(feature = "ort"))]
+        let deberta_score: Option<f32> = None;
+        finish_injection_audit(&self.ledger, &job, deberta_score);
     }
 
     /// P0 注入防护 Slice 3(T6)+ Slice C(T7):对 tool descriptor 的 description(+ input
@@ -641,64 +606,30 @@ impl Hub {
             return;
         }
 
-        // 检测器 1:启发式元指令正则(确定性、窄覆盖)
-        let heuristic_hits = vigil_redaction::scan_meta_instructions(&corpus).len();
-
-        // 检测器 2:DeBERTa 序列分类(feature gate;无 ort 恒 None → 行为退化为纯启发式,
-        // 与 Slice 3 一致)。warm session 在 serve 启动期已 load,此处只做一次推理。
-        #[cfg(feature = "ort")]
-        let deberta_score = self.injection_classify_opt(&corpus);
-        #[cfg(not(feature = "ort"))]
-        let deberta_score: Option<f32> = None;
-        let deberta_hit = matches!(deberta_score, Some(s) if s >= INJECTION_CLASSIFIER_THRESHOLD);
-
-        // 两检测器都未命中 → 不审计、不 bump(保持 Slice 3 行为:无命中即静默)。
-        if heuristic_hits == 0 && !deberta_hit {
-            return;
-        }
-
-        // 软信号 risk delta:两层针对**同一段 corpus**,取 max 不累加(单次投毒不应被双倍计分)。
-        let risk_delta = {
-            let h = if heuristic_hits > 0 {
-                vigil_redaction::META_INSTRUCTION_RISK_DELTA as i64
-            } else {
-                0
-            };
-            let d = if deberta_hit {
-                INJECTION_CLASSIFIER_RISK_DELTA
-            } else {
-                0
-            };
-            h.max(d)
-        };
-
+        // ADR 0023:corpus 组装后 → DeBERTa 在场则**带外**扫描(主路径不等推理),否则同步兜底。
+        // 扫描 / 审计 / risk 语义全在 `finish_injection_audit`,两条路径逐字节一致。
         let session_id = self
             .current_session_id()
             .unwrap_or_else(|_| "system".to_string());
-
-        // 先 bump risk(软信号累积,跨进程经 sessions.risk_score 可见),再写零回显审计事件。
-        if risk_delta > 0 {
-            let _ = self.ledger.bump_session_risk(&session_id, risk_delta);
+        let job = InjectionJob {
+            session_id,
+            text: corpus,
+            kind: InjectionJobKind::Descriptor {
+                server_id: server_id.to_string(),
+                tool_name: tool_name.to_string(),
+            },
+        };
+        #[cfg(feature = "ort")]
+        if let Some(classifier) = &self.injection_classifier {
+            dispatch_injection_async(Arc::clone(&self.ledger), Arc::clone(classifier), job);
+            return;
         }
-        let _ = self.ledger.append_event(
-            &session_id,
-            "tool_descriptor.meta_instruction",
-            &json!({
-                "server_id": server_id,
-                "tool_name": tool_name,
-                "match_count": heuristic_hits,
-                // 零回显:deberta 概率(2 位)+ corpus sha 前缀,绝不带 descriptor 原文。
-                "deberta_score": deberta_score.map(round2),
-                "deberta_hit": deberta_hit,
-                "risk_delta": risk_delta,
-                "signal": "soft",
-                "corpus_sha256_prefix": sha256_hex_prefix(&corpus),
-            }),
-            Some(&format!(
-                "descriptor_meta_instruction server:{server_id} tool:{tool_name} \
-                 heuristic:{heuristic_hits} deberta_hit:{deberta_hit}"
-            )),
-        );
+        // 同步兜底:非-ort(启发式-only)/ ort 但未 load classifier(deberta 恒 None)。
+        #[cfg(feature = "ort")]
+        let deberta_score = self.injection_classify_opt(&job.text);
+        #[cfg(not(feature = "ort"))]
+        let deberta_score: Option<f32> = None;
+        finish_injection_audit(&self.ledger, &job, deberta_score);
     }
 
     /// 在真实 spawn 上游 stdio 进程**之前**检查 command hash 是否漂移。
@@ -1602,6 +1533,183 @@ impl Hub {
                 )))
             }
         }
+    }
+}
+
+// ─────────────────── ADR 0023:注入软信号带外执行(同步隐私 / 异步注入)───────────────────
+
+/// ADR 0023:带外注入扫描的并发上限。超过即丢弃本次软信号扫描(背压,绝不阻塞主路径)。
+/// 软信号语义允许丢弃 —— 命中只累积 risk + 审计,**绝不**门控当前请求。
+#[cfg(feature = "ort")]
+const INJECTION_ASYNC_CAP: usize = 4;
+
+/// 进程级在途带外注入扫描线程数(每 serve 一个 Hub)。配 [`INJECTION_ASYNC_CAP`] 限并发。
+#[cfg(feature = "ort")]
+static INJECTION_INFLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// RAII:带外注入线程持有,确保**任何**退出路径(正常完成 / `classify` panic unwind)都归还在途
+/// 计数 —— 防 panic 跳过 `fetch_sub` 致计数永久泄漏、最终楔死 cap、静默丢弃所有后续软信号扫描
+/// (hostile review #4)。
+#[cfg(feature = "ort")]
+struct InjectionInflightGuard;
+#[cfg(feature = "ort")]
+impl Drop for InjectionInflightGuard {
+    fn drop(&mut self) {
+        INJECTION_INFLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// 一次待扫的注入软信号作业(同步路径与带外线程共用;纯数据,无 ort 依赖,故非 cfg-gated)。
+struct InjectionJob {
+    session_id: String,
+    /// 待扫文本(result 原文 / descriptor 汇总 corpus),已由 caller 组装后 move 进作业。
+    text: String,
+    kind: InjectionJobKind,
+}
+
+/// 注入作业两种审计形态(result 注入 / descriptor 元指令),字段即各自零回显审计 payload 所需。
+enum InjectionJobKind {
+    Result {
+        invocation_id: String,
+        server_id: String,
+        tool_name: String,
+    },
+    Descriptor {
+        server_id: String,
+        tool_name: String,
+    },
+}
+
+/// ADR 0023:注入软信号的 merge + bump risk + **零回显**审计 —— 同步路径与带外 worker 共用,
+/// 保证两条路径扫描/审计语义**逐字节一致**(无漂移)。
+///
+/// `deberta_score`:同步非-ort 路径 / ort 未 load classifier → `None`(退化纯启发式);带外线程传
+/// DeBERTa `classify` 结果。两检测器对同一文本取 **max** risk_delta **不累加**(对齐既有
+/// descriptor/result 扫描不变量;单次投毒不双倍计分)。命中即 bump session risk(累积,跨进程经
+/// `sessions.risk_score` 可见)+ 写零回显审计。**绝不** deny / 改写。
+fn finish_injection_audit(ledger: &Ledger, job: &InjectionJob, deberta_score: Option<f32>) {
+    // 启发式扫描 + 零回显审计锚点 sha 的范围按 kind 区分(还原 ADR 0023 前的既有行为,避免回归):
+    //   - Result:16KB 前缀 —— result 是 attacker 可控的大文本,正则 O(n) 需 CPU 防护(OLD
+    //     `audit_result_injection` 即对 `injection_scan_prefix(result_text)` 扫描)。
+    //   - Descriptor:**全 corpus**,不 cap —— descriptor 源受限(tool 定义,非 attacker-result),
+    //     OLD `audit_descriptor_meta_instructions` 对 `&corpus` 全量扫描;若在此 cap 会让深埋 >16KB
+    //     的元指令投毒漏检、且 `corpus_sha256_prefix` 锚点漂移。
+    // DeBERTa 概率由 caller / 带外线程统一在 16KB 前缀上算(两 kind 一致,匹配 OLD `injection_classify_opt`
+    // 内部的 tokenizer cap),故仅启发式+sha 在此按 kind 区分,deberta_score 直接消费。
+    let scan: &str = match &job.kind {
+        InjectionJobKind::Result { .. } => injection_scan_prefix(&job.text),
+        InjectionJobKind::Descriptor { .. } => &job.text,
+    };
+    let heuristic_hits = vigil_redaction::scan_meta_instructions(scan).len();
+    let deberta_hit = matches!(deberta_score, Some(s) if s >= INJECTION_CLASSIFIER_THRESHOLD);
+    // 两检测器都未命中 → 静默(软信号 fail-safe;常态零噪声)。
+    if heuristic_hits == 0 && !deberta_hit {
+        return;
+    }
+    let risk_delta = {
+        let h = if heuristic_hits > 0 {
+            vigil_redaction::META_INSTRUCTION_RISK_DELTA as i64
+        } else {
+            0
+        };
+        let d = if deberta_hit {
+            INJECTION_CLASSIFIER_RISK_DELTA
+        } else {
+            0
+        };
+        h.max(d)
+    };
+    if risk_delta > 0 {
+        let _ = ledger.bump_session_risk(&job.session_id, risk_delta);
+    }
+    match &job.kind {
+        InjectionJobKind::Result {
+            invocation_id,
+            server_id,
+            tool_name,
+        } => {
+            let _ = ledger.append_event(
+                &job.session_id,
+                "tool_result.injection_suspected",
+                &json!({
+                    "invocation_id": invocation_id,
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "heuristic_hits": heuristic_hits,
+                    "deberta_score": deberta_score.map(round2),
+                    "deberta_hit": deberta_hit,
+                    "risk_delta": risk_delta,
+                    "signal": "soft",
+                    "result_sha256_prefix": sha256_hex_prefix(scan),
+                }),
+                Some(&format!(
+                    "result_injection_suspected server:{server_id} tool:{tool_name} \
+                     heuristic:{heuristic_hits} deberta_hit:{deberta_hit}"
+                )),
+            );
+        }
+        InjectionJobKind::Descriptor {
+            server_id,
+            tool_name,
+        } => {
+            let _ = ledger.append_event(
+                &job.session_id,
+                "tool_descriptor.meta_instruction",
+                &json!({
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "match_count": heuristic_hits,
+                    "deberta_score": deberta_score.map(round2),
+                    "deberta_hit": deberta_hit,
+                    "risk_delta": risk_delta,
+                    "signal": "soft",
+                    "corpus_sha256_prefix": sha256_hex_prefix(scan),
+                }),
+                Some(&format!(
+                    "descriptor_meta_instruction server:{server_id} tool:{tool_name} \
+                     heuristic:{heuristic_hits} deberta_hit:{deberta_hit}"
+                )),
+            );
+        }
+    }
+}
+
+/// ADR 0023:把注入软信号作业派给**带外** capped detached 线程(仅 ort + classifier 在场时调用)。
+/// 主路径不阻塞(738MB DeBERTa 推理移出同步热路径);超 cap 或 spawn 失败 → 丢弃 + warn(软信号可丢)。
+/// 残留边界:serve 进程在带外线程完成前退出会丢失个别软信号审计(可接受 —— 非门控、跨进程 risk 仍累积)。
+#[cfg(feature = "ort")]
+fn dispatch_injection_async(
+    ledger: Arc<Ledger>,
+    classifier: Arc<vigil_redaction::InjectionClassifier>,
+    job: InjectionJob,
+) {
+    use std::sync::atomic::Ordering;
+    if INJECTION_INFLIGHT.fetch_add(1, Ordering::SeqCst) >= INJECTION_ASYNC_CAP {
+        INJECTION_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        eprintln!(
+            "vigil-hub: injection scan queue full (cap {INJECTION_ASYNC_CAP}); \
+             dropping one soft-signal scan (no gate impact)"
+        );
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("vigil-injection".into())
+        .spawn(move || {
+            // RAII 归还在途计数:正常完成 *或* `classify` panic unwind 都经 Drop 释放 slot(#4)。
+            let _slot = InjectionInflightGuard;
+            let scan = injection_scan_prefix(&job.text);
+            // 软信号 fail-safe:空文本 / 推理失败 → None(绝不 brick)。
+            let deberta_score = if scan.trim().is_empty() {
+                None
+            } else {
+                classifier.classify(scan).ok()
+            };
+            finish_injection_audit(&ledger, &job, deberta_score);
+        });
+    if spawned.is_err() {
+        // spawn 失败(罕见:线程上限/OOM)→ 回退计数;job 已 move 进闭包,丢弃本次软信号扫描。
+        INJECTION_INFLIGHT.fetch_sub(1, Ordering::SeqCst);
+        eprintln!("vigil-hub: injection scan thread spawn failed; dropping one soft-signal scan");
     }
 }
 
