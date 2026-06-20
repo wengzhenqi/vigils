@@ -8,11 +8,14 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
-## [v0.2.1-rc.1] — 2026-06-21 — ML redaction CLI variant shipped + real-machine validation fixes
+## [v0.2.1-rc.2] — 2026-06-21 — ML redaction CLI variant shipped + real-machine validation fixes
 
 Makes the optional ML redaction engine available as a prebuilt release artifact, and fixes two bugs
-that only a 3-platform real-hardware validation pass could surface. **Release candidate** — cut to
-exercise the new ML build/release job before a stable v0.2.1.
+that only a 3-platform real-hardware validation pass could surface. **Release candidate.** Supersedes
+v0.2.1-rc.1, whose release run surfaced two pipeline issues now fixed: the ML Linux leg's dylib fetch
+called `python` (absent on the ubuntu runner — now `python3`), and the desktop build hit a pre-existing
+Tauri version drift (Rust `tauri` 2.11 vs npm `@tauri-apps/api` 2.10, drifted by an earlier `cargo
+update`; the npm side is now aligned to 2.11).
 
 ### Added
 

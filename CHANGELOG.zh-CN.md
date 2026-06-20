@@ -8,10 +8,13 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
-## [v0.2.1-rc.1] — 2026-06-21 — ML 脱敏 CLI 变体发布 + 真机验证修复
+## [v0.2.1-rc.2] — 2026-06-21 — ML 脱敏 CLI 变体发布 + 真机验证修复
 
 把可选的 ML 脱敏引擎作为预构建 release 产物提供,并修复两个只有三平台真机验证才能暴露的 bug。
-**候选版** —— 为在正式 v0.2.1 前演练新的 ML 构建/发布 job 而切。
+**候选版。** 取代 v0.2.1-rc.1 —— 其 release run 暴露并已修复两个流水线问题:ML Linux 腿的 dylib
+fetch 调了 `python`(ubuntu runner 没有,改 `python3`),以及 desktop 构建撞上一个预存的 Tauri 版本
+漂移(Rust `tauri` 2.11 vs npm `@tauri-apps/api` 2.10,由早先一次 `cargo update` 引入;现 npm 侧已
+对齐到 2.11)。
 
 ### 新增
 
