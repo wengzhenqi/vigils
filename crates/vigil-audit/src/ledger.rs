@@ -314,9 +314,11 @@ impl Ledger {
                 }
             }
         }
-        Err(last.map(Into::into).unwrap_or_else(|| AuditError::InvalidInput {
-            reason: "failed to enable WAL journal mode (database busy after retries)",
-        }))
+        Err(last
+            .map(Into::into)
+            .unwrap_or_else(|| AuditError::InvalidInput {
+                reason: "failed to enable WAL journal mode (database busy after retries)",
+            }))
     }
 
     /// 返回 span Drop 兜底写 abandoned 事件时发生的失败累计次数(进程生命周期内)。
