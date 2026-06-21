@@ -1059,15 +1059,33 @@ impl Hub {
             AliasAwareScanResult::Clean | AliasAwareScanResult::AllAliased => {
                 // 通过:要么全无命中,要么所有硬指纹命中都落在 `secret://` alias 段里
             }
-            AliasAwareScanResult::RawSecret { rule } => {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                // ISS-A:`KEY=secret://alias` 被 env_assignment 残留触发时,通用的"use secret://
+                // alias"提示是误导(agent 已经用了 alias)。alias_shadowed 时给**赋值形不 detokenize**
+                // 的准确提示 + workaround;真裸 secret 仍走通用提示。两者 deny 不变(纵深防御一致)。
+                let reason = if alias_shadowed {
+                    format!(
+                        "secret:// alias inside a KEY=value assignment (rule={rule}); aliases are not \
+                         detokenized in assignment shape — move it to a non-assignment position"
+                    )
+                } else {
+                    format!("raw secret detected in args (rule={rule}); use secret:// alias")
+                };
+                let client_message: &str = if alias_shadowed {
+                    "secret:// alias cannot be used inside a KEY=value assignment; place the alias in \
+                     a non-assignment position — a header, query parameter, or standalone JSON value"
+                } else {
+                    "raw secret detected in tool arguments; use secret:// alias"
+                };
                 let dec = DecisionRecord {
                     decision_id: Uuid::new_v4().to_string(),
                     invocation_id: invocation_id.clone(),
                     decision: DecisionKind::Deny,
                     risk_score: 100,
-                    reasons: vec![format!(
-                        "raw secret detected in args (rule={rule}); use secret:// alias"
-                    )],
+                    reasons: vec![reason],
                     policy_ids: vec!["hub-hard-secret-gate".into()],
                     created_at: 0,
                 };
@@ -1095,7 +1113,7 @@ impl Hub {
 
                 return Ok(Some(req.error(
                     JsonRpcError::VIGIL_DENIED,
-                    "raw secret detected in tool arguments; use secret:// alias",
+                    client_message,
                     Some(json!({"rule": rule, "decision_id": dec.decision_id})),
                 )));
             }
@@ -1791,6 +1809,13 @@ pub(crate) enum AliasAwareScanResult {
     RawSecret {
         /// 首个命中的硬指纹规则名(与 `vigil_redaction::detect_hard_secret` 返值一致)。
         rule: &'static str,
+        /// True 当命中规则是 `env_assignment` **且 alias 本身就是那个赋值的 value** —— 即 agent 把
+        /// alias 放进 `KEY=value` 赋值形(`KEY=secret://x`),alias 被剥成 NUL 后残留的 `KEY=<NUL>`
+        /// 仍命中赋值规则。**精确判定**(非"同串恰好有 alias"):整段移除 alias 后 `env_assignment`
+        /// 不再命中才算(否则真裸 secret 在别处的赋值里,alias 只是同串 → false)。仅用于给 agent
+        /// **更准的提示消息**;**不**改变 deny(纵深防御不变,见 `hub_alias_detokenize.rs:251-254`:
+        /// alias 在赋值形里刻意不 detokenize)。
+        alias_shadowed: bool,
     },
 }
 
@@ -1819,13 +1844,15 @@ pub(crate) enum AliasAwareScanResult {
 pub(crate) fn scan_args_for_raw_secrets(args: &Value) -> AliasAwareScanResult {
     let mut saw_aliased_hit = false;
 
-    fn walk(v: &Value, saw_aliased_hit: &mut bool) -> Option<&'static str> {
+    // 返回 `(rule, alias_shadowed)`:alias_shadowed 见 [`AliasAwareScanResult::RawSecret`] 文档
+    // (命中所在串含被 strip 的 alias **且** rule==env_assignment —— alias 落在赋值形里被残留触发)。
+    fn walk(v: &Value, saw_aliased_hit: &mut bool) -> Option<(&'static str, bool)> {
         match v {
             Value::String(s) => scan_string(s, saw_aliased_hit),
             Value::Array(arr) => {
                 for item in arr {
-                    if let Some(rule) = walk(item, saw_aliased_hit) {
-                        return Some(rule);
+                    if let Some(hit) = walk(item, saw_aliased_hit) {
+                        return Some(hit);
                     }
                 }
                 None
@@ -1835,12 +1862,12 @@ pub(crate) fn scan_args_for_raw_secrets(args: &Value) -> AliasAwareScanResult {
                     // R2 BLOCKER 1 修复:object **key 也必须扫**(否则 `{"ghp_..."_real: "x"}`
                     // 可绕过 B4 直传原 key)。key 不可能承载 `secret://alias` 语义(alias
                     // 只在 value 里有意义;即使 key 含 `secret://xxx`,也视作可疑输入),
-                    // 所以 key 上的命中直接判 RawSecret,不走 alias 豁免路径。
+                    // 所以 key 上的命中直接判 RawSecret,不走 alias 豁免路径(alias_shadowed=false)。
                     if let Some(rule) = vigil_redaction::detect_hard_secret(k) {
-                        return Some(rule);
+                        return Some((rule, false));
                     }
-                    if let Some(rule) = walk(val, saw_aliased_hit) {
-                        return Some(rule);
+                    if let Some(hit) = walk(val, saw_aliased_hit) {
+                        return Some(hit);
                     }
                 }
                 None
@@ -1850,11 +1877,21 @@ pub(crate) fn scan_args_for_raw_secrets(args: &Value) -> AliasAwareScanResult {
         }
     }
 
-    fn scan_string(s: &str, saw_aliased_hit: &mut bool) -> Option<&'static str> {
+    fn scan_string(s: &str, saw_aliased_hit: &mut bool) -> Option<(&'static str, bool)> {
         let stripped = strip_aliases(s);
         // 在剥掉 alias 段后的文本上扫硬指纹
         if let Some(rule) = vigil_redaction::detect_hard_secret(&stripped) {
-            return Some(rule);
+            // alias_shadowed:命中是 `env_assignment` **且 alias 本身就是那个赋值的 value**。
+            // 精度(双评审 codex+hostile 都指出旧 `stripped != s` 过松:`"secret://ok PWD=raw"`
+            // 会把真裸 secret 误标 shadowed):把 alias **整段移除**(空串)后,若 `env_assignment`
+            // **不再**命中,则 alias 即该赋值 value(`KEY=secret://x` → `KEY=` 无 value 不命中);
+            // 若仍命中,说明真裸 secret 在别处的赋值里(`secret://ok PWD=raw` → ` PWD=raw` 仍命中)
+            // → 不标 shadowed,保留通用提示。委托同一 detector,无正则漂移;只影响文案不改 deny。
+            let alias_shadowed = rule == "env_assignment"
+                && stripped.as_str() != s
+                && vigil_redaction::detect_hard_secret(&strip_aliases_with(s, ""))
+                    != Some("env_assignment");
+            return Some((rule, alias_shadowed));
         }
         // 若 stripped 后无命中,但原串命中 → 说明命中都落在 alias 段内(合法)
         if vigil_redaction::detect_hard_secret(s).is_some() {
@@ -1863,8 +1900,11 @@ pub(crate) fn scan_args_for_raw_secrets(args: &Value) -> AliasAwareScanResult {
         None
     }
 
-    if let Some(rule) = walk(args, &mut saw_aliased_hit) {
-        return AliasAwareScanResult::RawSecret { rule };
+    if let Some((rule, alias_shadowed)) = walk(args, &mut saw_aliased_hit) {
+        return AliasAwareScanResult::RawSecret {
+            rule,
+            alias_shadowed,
+        };
     }
     if saw_aliased_hit {
         AliasAwareScanResult::AllAliased
@@ -1885,6 +1925,15 @@ pub(crate) fn scan_args_for_raw_secrets(args: &Value) -> AliasAwareScanResult {
 /// 白名单选定依据:URL path-safe 字符(RFC 3986 `unreserved` + `/`),足以承载
 /// 典型 alias 名(`secret://gh/rw` / `secret://stripe.live_key` / `secret://my-api_v2`)。
 fn strip_aliases(s: &str) -> String {
+    strip_aliases_with(s, "\0")
+}
+
+/// 同 [`strip_aliases`],但 alias token 用 `replacement` 替换。`"\0"`=默认 NUL 占位
+/// (断词边界,见 [`strip_aliases`]);`""`=**整段移除**,仅用于 ISS-A 判定"alias 是否就是
+/// `env_assignment` 命中的那个赋值 value":移除 alias 后若 `env_assignment` 不再命中,则该
+/// alias 即赋值 value(`KEY=secret://x`),否则真裸 secret 在别处(`secret://x TOKEN=raw`)。
+/// 该判定**只**影响 deny 消息文案,**不**影响 deny 本身(deny 已由 NUL 版 `stripped` 触发)。
+fn strip_aliases_with(s: &str, replacement: &str) -> String {
     const ALIAS_PREFIX: &str = "secret://";
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
@@ -1900,8 +1949,8 @@ fn strip_aliases(s: &str) -> String {
             while j < bytes.len() && is_alias_body_char(bytes[j]) {
                 j += 1;
             }
-            // 整段 alias token([i, j)) 替换为单个 NUL(长度无关,不影响硬指纹扫描)
-            out.push('\x00');
+            // 整段 alias token([i, j)) 替换为 `replacement`(NUL 占位 / 空串移除)
+            out.push_str(replacement);
             i = j;
         } else {
             // 非 alias 起点:逐字符拷过去(注意 UTF-8 边界)
@@ -2313,7 +2362,7 @@ mod tests {
         // 真 ghp_ 直传必须 RawSecret
         let args = json!({"token": "ghp_1234567890abcdef1234567890abcdef12345678"});
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(github_token),得到 {other:?}"),
         }
     }
@@ -2341,7 +2390,7 @@ mod tests {
             "b": "ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(github_token),得到 {other:?}"),
         }
     }
@@ -2358,7 +2407,7 @@ mod tests {
             }
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(github_token),得到 {other:?}"),
         }
     }
@@ -2368,7 +2417,7 @@ mod tests {
         // 自由文本形态 `FOO_API_KEY=...` 命中 env_assignment 规则
         let args = json!({"cmd": "export OPENAI_API_KEY=sk-realsecret1234567890ABCDEFghij"});
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => {
+            AliasAwareScanResult::RawSecret { rule, .. } => {
                 // 命中规则可能是 env_assignment 或 openai_api_key;HARD_RULES 顺序决定首个
                 assert!(
                     rule == "env_assignment" || rule == "openai_api_key",
@@ -2380,6 +2429,89 @@ mod tests {
     }
 
     #[test]
+    fn scan_args_alias_in_assignment_sets_alias_shadowed() {
+        // ISS-A:`KEY=secret://alias` 经 strip→`KEY=<NUL>` 仍命中 env_assignment(纵深防御正确 deny),
+        // 但 alias_shadowed=true → 给 agent "赋值形不 detokenize" 的准确提示而非误导的 "use secret://"。
+        let args = json!({"cmd": "DEPLOY_KEY=secret://mytoken"});
+        match scan_args_for_raw_secrets(&args) {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                assert_eq!(rule, "env_assignment");
+                assert!(
+                    alias_shadowed,
+                    "alias 落在赋值形里被残留触发 → alias_shadowed 必为 true"
+                );
+            }
+            other => panic!("期望 RawSecret(env_assignment, shadowed),得到 {other:?}"),
+        }
+
+        // 真裸 secret(无 alias)→ alias_shadowed=false,保留通用 "use secret:// alias" 提示。
+        let raw = json!({"token": "ghp_1234567890abcdef1234567890abcdef12345678"});
+        match scan_args_for_raw_secrets(&raw) {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                assert_eq!(rule, "github_token");
+                assert!(
+                    !alias_shadowed,
+                    "无 alias 的真裸 secret → alias_shadowed 必为 false"
+                );
+            }
+            other => panic!("期望 RawSecret(github_token, 非 shadowed),得到 {other:?}"),
+        }
+
+        // 精度:同串含 alias + 真 ghp(非赋值形)→ 命中 github_token(非 env_assignment)→
+        // alias_shadowed=false(不把真裸 secret 误判成"赋值形 alias",避免误导提示)。
+        let mixed = json!({"x": "secret://ok ghp_1234567890abcdef1234567890abcdef12345678"});
+        match scan_args_for_raw_secrets(&mixed) {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                assert_eq!(rule, "github_token");
+                assert!(
+                    !alias_shadowed,
+                    "真裸 secret 命中非 env_assignment → 不标 shadowed"
+                );
+            }
+            other => panic!("期望 RawSecret(github_token),得到 {other:?}"),
+        }
+
+        // 双评审 counterexample:真裸 env_assignment secret(`PWD=hunter2`)+ **别处**恰好有 alias →
+        // 旧 `stripped != s` 会误标 shadowed;精确判定后必须 false(移除 alias 后 env_assignment 仍命中)。
+        let raw_env_plus_alias = json!({"cmd": "secret://ok DATABASE_PASSWORD=hunter2plaintext"});
+        match scan_args_for_raw_secrets(&raw_env_plus_alias) {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                assert_eq!(rule, "env_assignment");
+                assert!(
+                    !alias_shadowed,
+                    "真裸 env_assignment secret + 别处 alias → 不标 shadowed(精度:移除 alias 仍命中)"
+                );
+            }
+            other => panic!("期望 RawSecret(env_assignment, 非 shadowed),得到 {other:?}"),
+        }
+
+        // 空白容忍:`API_KEY = secret://x`(`=` 两侧空白)alias 仍是赋值 value → shadowed=true。
+        let spaced = json!({"cmd": "API_KEY = secret://mytoken"});
+        match scan_args_for_raw_secrets(&spaced) {
+            AliasAwareScanResult::RawSecret {
+                rule,
+                alias_shadowed,
+            } => {
+                assert_eq!(rule, "env_assignment");
+                assert!(alias_shadowed, "赋值形含空白时 alias 仍是 value → shadowed");
+            }
+            other => panic!("期望 RawSecret(env_assignment, shadowed),得到 {other:?}"),
+        }
+    }
+
+    #[test]
     fn scan_args_adversarial_secret_prefix_without_path() {
         // 对抗:`secret://` 空 alias + 后跟真 key(中间有空格终止 alias 段)
         // 真 key 不会被 alias 切掉,仍应命中
@@ -2387,7 +2519,7 @@ mod tests {
             "cmd": "secret:// ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(github_token),得到 {other:?}"),
         }
     }
@@ -2399,7 +2531,7 @@ mod tests {
             "cmd": "Secret://ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(大小写必须严格):得到 {other:?}"),
         }
     }
@@ -2411,7 +2543,7 @@ mod tests {
             "cmd": "secret:/ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("期望 RawSecret(单斜杠不算 alias):得到 {other:?}"),
         }
     }
@@ -2424,7 +2556,7 @@ mod tests {
             "ghp_1234567890abcdef1234567890abcdef12345678": "harmless_value"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("object key 里的真 key 必须被拦:得到 {other:?}"),
         }
     }
@@ -2438,7 +2570,7 @@ mod tests {
             }
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "anthropic_api_key"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "anthropic_api_key"),
             other => panic!("嵌套 object key 里的真 key 必须被拦:得到 {other:?}"),
         }
     }
@@ -2451,7 +2583,7 @@ mod tests {
             "cmd": "secret://ok|ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("`|` 分隔后的 raw secret 必须不被 alias 吞:得到 {other:?}"),
         }
     }
@@ -2463,7 +2595,7 @@ mod tests {
             "cmd": "secret://ok</x><y>ghp_1234567890abcdef1234567890abcdef12345678</y>"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("XML tag 分隔后的 raw secret 必须不被 alias 吞:得到 {other:?}"),
         }
     }
@@ -2475,7 +2607,7 @@ mod tests {
             "cmd": "secret://ok\\ghp_1234567890abcdef1234567890abcdef12345678"
         });
         match scan_args_for_raw_secrets(&args) {
-            AliasAwareScanResult::RawSecret { rule } => assert_eq!(rule, "github_token"),
+            AliasAwareScanResult::RawSecret { rule, .. } => assert_eq!(rule, "github_token"),
             other => panic!("`\\` 分隔后的 raw secret 必须不被 alias 吞:得到 {other:?}"),
         }
     }
