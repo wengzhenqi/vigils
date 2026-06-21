@@ -8,6 +8,35 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.2.2] — 2026-06-21 — status MCP-wrap reporting + clearer ML-engine error + release hardening
+
+A small follow-up to v0.2.1, from a global code audit + real-machine QA: two user-facing CLI fixes,
+a flaky-test fix, and CI/release-pipeline hardening. The protection logic itself is unchanged; the two
+CLI fixes were validated on real Linux hardware from a user's perspective.
+
+### Fixed
+
+- **`vigil-hub setup --status` now reports MCP-gateway protection.** It previously inspected only the
+  native-tool hook, so a user who set up protection with `setup --mcp` (which wraps MCP servers but
+  installs no hook) was falsely told `Protection: not installed`. Status now shows both layers —
+  `Native hook:` and `MCP gateway: N server(s) wrapped` — and `Protection: ACTIVE` reflects either
+  layer being on.
+- **Clearer error when the ML engine is requested on a non-ML build.** `vigil-hub serve --engine ml`
+  on the default (`vigils-cli-<plat>`) build now names the `--engine ml` flag the user actually passed
+  and points to the ML variant download (`vigils-cli-ml-<plat>`) or a `--features ort` rebuild, instead
+  of naming an internal flag.
+
+### Changed (maintainer / CI)
+
+- **Release pipeline hardened.** The release version gate now also fails fast on stale inter-crate
+  version pins and a Tauri Rust/npm minor mismatch (both bit the v0.2.1 release process). The GitHub
+  release is now created as a draft and published only after every build job succeeds, so a failed
+  build can no longer leave a public release with partial assets.
+- De-flaked an in-process approval-wakeup test (it now measures wakeup latency instead of total
+  wall-clock, removing a CI-load-dependent flake).
+
+---
+
 ## [v0.2.1] — 2026-06-21 — ML redaction CLI variant + real-machine validation fixes
 
 Ships the optional ML redaction engine as a prebuilt release artifact (`vigils-cli-ml-<plat>`),

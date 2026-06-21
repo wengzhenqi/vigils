@@ -8,6 +8,29 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.2.2] — 2026-06-21 — status 报告 MCP-wrap 防护 + ML 引擎错误文案更清晰 + 发布流程加固
+
+v0.2.1 的小幅跟进,来自一次全局代码审计 + 真机 QA:两个面向用户的 CLI 修复、一个 flaky 测试修复,
+以及 CI/发布流程加固。防护逻辑本身未变;两个 CLI 修复已在真实 Linux 硬件上从用户视角验证。
+
+### Fixed
+
+- **`vigil-hub setup --status` 现报告 MCP 网关防护。** 此前只检查原生工具 hook,故用 `setup --mcp`
+  (只 wrap MCP server、不装 hook)配置防护的用户被误报 `Protection: not installed`。status 现显示
+  两层 —— `Native hook:` 与 `MCP gateway: N server(s) wrapped` —— `Protection: ACTIVE` 反映任一层启用。
+- **在非 ML 件上请求 ML 引擎时错误更清晰。** 默认件(`vigils-cli-<plat>`)上 `vigil-hub serve --engine ml`
+  现引用用户实际所传的 `--engine ml`,并指引下载 ML 变体(`vigils-cli-ml-<plat>`)或 `--features ort`
+  重建,不再引用内部 flag。
+
+### Changed(维护者 / CI)
+
+- **发布流程加固。** 发布版本门现还会对陈旧的 inter-crate 版本 pin 与 Tauri Rust/npm minor 不一致
+  早失败(二者都在 v0.2.1 发布过程踩过)。GitHub release 现先建为草稿,所有构建 job 成功后才发布,
+  故构建失败不再可能留下资产残缺的公开 release。
+- de-flake 一个进程内审批唤醒测试(改测唤醒延迟而非总 wall-clock,消除受 CI 负载影响的 flaky)。
+
+---
+
 ## [v0.2.1] — 2026-06-21 — ML 脱敏 CLI 变体 + 真机验证修复
 
 发布可选的 ML 脱敏引擎作为预构建 release 产物(`vigils-cli-ml-<plat>`),与默认硬指纹 CLI 并存,
