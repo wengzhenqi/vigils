@@ -910,3 +910,37 @@ fn register_oauth_token_metadata_rejects_empty_issuer() {
         }
     ));
 }
+
+/// ISS-20260621-004 回归:多个独立连接**并发** `Ledger::open` 同一新磁盘库,不得有任何连接
+/// 因撞锁失败。根因:`init()` 此前在 `PRAGMA journal_mode = WAL`(取排他锁)**之前**未设
+/// busy_timeout,并发 open 撞锁会因 busy_timeout 仍是默认 0 而**立即** "database is locked"
+/// 失败而非等待 —— 这是 co_approval(hook + resolver 双连接近乎同时 open)在 Linux CI 偶发
+/// flaky 的真因:hook open 失败→回退 Ask→从不写 Pending→resolver 10s 超时 panic。
+/// 修复 = busy_timeout 提到撞锁语句之前。barrier 让 N 线程对齐同时冲 open,最大化 open-race。
+#[test]
+fn concurrent_open_same_fresh_ledger_never_locks_out() {
+    use std::sync::{Arc, Barrier};
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("ledger.sqlite3");
+    let n = 16;
+    let barrier = Arc::new(Barrier::new(n));
+    let handles: Vec<_> = (0..n)
+        .map(|_| {
+            let p = path.clone();
+            let b = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                b.wait(); // 所有线程在此对齐,尽量同时冲 open 以最大化 open-race
+                Ledger::open(&p).map(|_| ()).map_err(|e| e.to_string())
+            })
+        })
+        .collect();
+    let errs: Vec<String> = handles
+        .into_iter()
+        .filter_map(|h| h.join().unwrap().err())
+        .collect();
+    assert!(
+        errs.is_empty(),
+        "并发 open 同一新库不应有连接因撞锁失败;{}/{n} 失败: {errs:?}",
+        errs.len()
+    );
+}

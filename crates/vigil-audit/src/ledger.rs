@@ -258,10 +258,15 @@ impl Ledger {
     }
 
     fn init(conn: Connection) -> Result<Self> {
-        // 尝试启用 WAL。内存库(`:memory:`)会返回 "memory";磁盘库会返回 "wal"。
-        // 我们不接受磁盘库退化为 "delete":那意味着本机 SQLite 版本 / 权限异常,
-        // 审计不变量将失守 —— fail-closed。
-        let mode: String = conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))?;
+        // busy_timeout 先设:处理普通锁等待(append 路径 IMMEDIATE 事务、建表/迁移依赖它串行化)。
+        conn.pragma_update(None, "busy_timeout", 5000)?;
+        // 启用 WAL。切 journal 模式需排他锁;多个独立连接**并发 open 同一新库**时各自先持 SHARED
+        // 锁再求 EXCLUSIVE → upgrade 死锁,SQLite 直接返 SQLITE_BUSY/LOCKED 且 busy_timeout 对
+        // upgrade 死锁**不重试**(实测仅靠提前设 busy_timeout 仍 ~10% 撞锁失败)。
+        // `enable_wal_with_retry` 有界退避打破该 livelock。内存库返回 "memory";磁盘库返回 "wal";
+        // 不接受退化为 "delete"(SQLite 版本/权限异常)→ fail-closed。
+        // (ISS-20260621-004:co_approval 双连接 hook+resolver open-race 在 Linux CI 偶发 flaky 根因)
+        let mode = Self::enable_wal_with_retry(&conn)?;
         let mode_lc = mode.to_lowercase();
         if mode_lc != "wal" && mode_lc != "memory" {
             return Err(AuditError::InvalidInput {
@@ -269,7 +274,6 @@ impl Ledger {
             });
         }
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
 
         conn.execute_batch(SCHEMA_SQL)?;
@@ -284,6 +288,35 @@ impl Ledger {
             drop_failure_count: AtomicU64::new(0),
             approval_broker: crate::approvals::ApprovalBroker::default(),
         })
+    }
+
+    /// 以有界退避重试设置 `journal_mode = WAL`,容忍多个独立连接**并发 open 同一新库**时的
+    /// upgrade-死锁 BUSY/LOCKED:各连接先持 SHARED 锁再求 EXCLUSIVE 切 WAL 模式,SQLite 对该
+    /// 死锁直接返 BUSY 且 busy_timeout 不重试。撞锁即退避重试,期间另一连接会成功置 WAL,后续
+    /// 重试见“已是 WAL”立即返回。~100×10ms≈1s 上限,远小于 hook co-approval 等待预算。
+    fn enable_wal_with_retry(conn: &Connection) -> Result<String> {
+        let mut last: Option<rusqlite::Error> = None;
+        for _ in 0..100 {
+            match conn.query_row("PRAGMA journal_mode = WAL", [], |r| r.get::<_, String>(0)) {
+                Ok(m) => return Ok(m),
+                Err(e) => {
+                    let busy = matches!(
+                        &e,
+                        rusqlite::Error::SqliteFailure(f, _)
+                            if f.code == rusqlite::ErrorCode::DatabaseBusy
+                                || f.code == rusqlite::ErrorCode::DatabaseLocked
+                    );
+                    if !busy {
+                        return Err(e.into());
+                    }
+                    last = Some(e);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        }
+        Err(last.map(Into::into).unwrap_or_else(|| AuditError::InvalidInput {
+            reason: "failed to enable WAL journal mode (database busy after retries)",
+        }))
     }
 
     /// 返回 span Drop 兜底写 abandoned 事件时发生的失败累计次数(进程生命周期内)。
