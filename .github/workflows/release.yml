@@ -50,6 +50,35 @@ jobs:
             exit 1
           fi
 
+      # ISS-20260621-006: two release-killing drifts the 3-way gate above does NOT catch — they
+      # otherwise fail LATE (dependency resolution / desktop build) AFTER the Release object exists.
+      # Fail fast here, before the release is created.
+      - name: Verify inter-crate pins + Tauri Rust/npm alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="${{ steps.resolve.outputs.tag }}"; want="${want#v}"
+          # (1) inter-crate path-dep version pins must equal the workspace version — they are NOT
+          # auto-tracked, and a stale pin breaks pre-release dependency resolution (bit v0.2.1-rc.1).
+          bad=0
+          while IFS= read -r line; do
+            v=$(printf '%s' "$line" | sed -E 's/.*version *= *"([^"]+)".*/\1/')
+            if [ "$v" != "$want" ]; then echo "  stale pin (want $want): $line"; bad=1; fi
+          done < <(grep -rhE 'path *=' crates/*/Cargo.toml apps/*/Cargo.toml 2>/dev/null | grep -E 'version *= *"' || true)
+          if [ "$bad" = 1 ]; then
+            echo "::error::inter-crate path-dep version pin(s) not at $want — bump every pin with the version (docs/releasing-gotchas.md)."
+            exit 1
+          fi
+          # (2) the Tauri Rust crate (Cargo.lock) and npm @tauri-apps/api must share major.minor, else
+          # `cargo tauri build` refuses to build (bit the desktop job when cargo update drifted 2.10->2.11).
+          rust_tauri=$(grep -A1 '^name = "tauri"$' Cargo.lock | grep -m1 '^version = ' | sed -E 's/.*"([0-9]+\.[0-9]+)\..*/\1/')
+          npm_tauri=$(grep -m1 '"@tauri-apps/api"' apps/desktop/ui/package.json | sed -E 's/.*"[~^]?([0-9]+\.[0-9]+)\..*/\1/')
+          echo "inter-crate pins OK at $want; tauri Rust=$rust_tauri npm @tauri-apps/api=$npm_tauri"
+          if [ "$rust_tauri" != "$npm_tauri" ]; then
+            echo "::error::Tauri Rust ($rust_tauri) vs npm @tauri-apps/api ($npm_tauri) major.minor mismatch — cargo tauri build will refuse. Run: npm --prefix apps/desktop/ui install @tauri-apps/api@^$rust_tauri @tauri-apps/cli@^$rust_tauri."
+            exit 1
+          fi
+
       # Release notes = English CHANGELOG section + a clearly-separated Chinese section
       # (never interleaved) + Downloads/footer. Single source of truth: the curated notes
       # live in CHANGELOG.md / CHANGELOG.zh-CN.md, not duplicated here.
@@ -97,7 +126,9 @@ jobs:
         with:
           tag_name: ${{ steps.resolve.outputs.tag }}
           name: Vigils ${{ steps.resolve.outputs.tag }}
-          draft: false
+          # ISS-20260621-005: create as DRAFT; the `finalize` job flips it to published only after
+          # every build job succeeds, so a failed build never leaves a public partial release.
+          draft: true
           # pre-release tags (e.g. v0.2.0-beta.1, v0.2.0-rc.1) carry a `-`; mark them as
           # pre-release on GitHub so a beta isn't listed as the latest stable. A final tag
           # (v0.2.0) has no `-` and is published as a normal release.
@@ -210,6 +241,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true # ISS-005: stay draft until `finalize` publishes after all builds pass
           files: |
             dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}
             dist/vigils-cli-${{ matrix.plat }}.${{ matrix.archive }}.sha256
@@ -339,6 +371,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true # ISS-005: stay draft until `finalize` publishes after all builds pass
           files: |
             dist/vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}
             dist/vigils-cli-ml-${{ matrix.plat }}.${{ matrix.archive }}.sha256
@@ -431,6 +464,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true # ISS-005: stay draft until `finalize` publishes after all builds pass
           files: |
             target/release/bundle/**/*-setup.exe
             target/release/bundle/**/*-setup.exe.sig
@@ -474,6 +508,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true # ISS-005: stay draft until `finalize` publishes after all builds pass
           files: latest-${{ matrix.plat }}.json
 
   # ── 4. Chrome MV3 扩展（zip,供用户 load unpacked）──────────────────────
@@ -492,6 +527,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true # ISS-005: stay draft until `finalize` publishes after all builds pass
           files: dist/vigils-chrome-extension.zip
 
       # D25:为浏览器扩展 zip 生成 build provenance。
@@ -499,3 +535,23 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/vigils-chrome-extension.zip
+
+  # ── 6. Finalize ───────────────────────────────────────────────────────────
+  # ISS-20260621-005: publish the release (draft -> public) ONLY after every build job succeeded.
+  # If any build fails this job is skipped (needs: all builds) and the release stays a draft, so a
+  # failed build never leaves a public release with missing/partial assets. Mirrors — and now
+  # enforces in CI — the manual rc-then-promote discipline in docs/releasing-gotchas.md.
+  finalize:
+    needs: [create-release, cli, cli-ml, desktop, extension]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release after all builds succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.create-release.outputs.tag }}"
+          # pre-release tags carry a `-` (e.g. v0.2.2-rc.1) → mark prerelease, not Latest.
+          if [[ "$tag" == *-* ]]; then pre=true; latest=false; else pre=false; latest=true; fi
+          echo "publishing $tag (prerelease=$pre, latest=$latest)"
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease="$pre" --latest="$latest"
