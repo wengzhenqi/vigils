@@ -414,6 +414,26 @@ pub fn classify_local_scope_servers(claude_cfg: &Value) -> Vec<(String, McpServe
     out
 }
 
+/// 统计 `~/.claude.json` 中已被 Vigil 网关 wrap 的 MCP server 数(user-scope 顶层 +
+/// 各 project local-scope 之和)。供 `setup --status` 报告 MCP-wrap 保护层 —— 修
+/// **ISS-20260621-002**:此前 status 只看原生 hook 的 [`setup::ProtectionState`],用
+/// `setup --mcp` turnkey(只 wrap MCP、不装 hook)的用户被误报 "Protection: not installed"。
+/// best-effort 纯展示:读不到 / 解析失败返回 0(非安全判定,不影响实际防护)。
+pub fn wrapped_server_count(home: &Path) -> usize {
+    let Ok(Some(cfg)) = read_claude_json(&claude_json_path(home)) else {
+        return 0;
+    };
+    let user = classify_user_scope_servers(&cfg)
+        .iter()
+        .filter(|c| matches!(c, McpServerClass::AlreadyWrapped { .. }))
+        .count();
+    let local = classify_local_scope_servers(&cfg)
+        .iter()
+        .filter(|(_, c)| matches!(c, McpServerClass::AlreadyWrapped { .. }))
+        .count();
+    user + local
+}
+
 /// `setup --mcp`(只读)的预览报告 —— 供 CLI 层渲染。
 #[derive(Debug, Clone)]
 pub struct McpPreviewReport {
@@ -1738,6 +1758,42 @@ pub fn run_all_with(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// ISS-20260621-002 守门:`wrapped_server_count` 统计 user-scope + local-scope 中已被 Vigil
+    /// 网关 wrap(`AlreadyWrapped`)的 server 数,供 `setup --status` 报告 MCP-wrap 保护层。
+    #[test]
+    fn wrapped_server_count_counts_already_wrapped_user_and_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let wrapped = |id: &str| {
+            json!({
+                "command": "vigil-hub",
+                "args": ["wrap", "--server-id", id, "--vigil-managed-mcp", "--", "npx", "x"]
+            })
+        };
+        let cfg = json!({
+            "mcpServers": {
+                "plain": { "type": "stdio", "command": "npx", "args": ["x"] }, // Wrappable → 不计
+                "w1": wrapped("w1"),                                            // AlreadyWrapped → 计
+            },
+            "projects": {
+                "/proj/a": { "mcpServers": { "w2": wrapped("w2") } },           // local AlreadyWrapped → 计
+            }
+        });
+        std::fs::write(home.join(".claude.json"), cfg.to_string()).unwrap();
+        assert_eq!(
+            wrapped_server_count(home),
+            2,
+            "应只计 AlreadyWrapped(user w1 + local w2),不计 Wrappable plain"
+        );
+    }
+
+    /// 守门:无 `~/.claude.json` 时 best-effort 返回 0(不 panic)。
+    #[test]
+    fn wrapped_server_count_missing_config_is_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(wrapped_server_count(dir.path()), 0);
+    }
 
     #[test]
     fn classifies_stdio_remote_and_wrapped() {

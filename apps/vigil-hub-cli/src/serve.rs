@@ -483,8 +483,10 @@ pub enum ServeError {
     /// 但当前二进制**未**用 `--features ort` 编译。fail-closed 启动失败,
     /// **绝不**降级到 NoopEngine(否则用户感知"已启用 privacy filter"实际未生效)。
     #[error(
-        "privacy filter requested via --enable-privacy-filter, \
-         but vigil-hub-cli was not built with `--features ort`"
+        "the ML redaction engine (requested via `--engine ml`, or the legacy \
+         `--enable-privacy-filter`) needs a build with `--features ort`, but this `vigil-hub` was \
+         not built with it. Use the ML variant `vigils-cli-ml-<platform>` from the releases page, \
+         or rebuild with `--features ort`."
     )]
     PrivacyFilterUnavailable,
 
@@ -498,8 +500,9 @@ pub enum ServeError {
     /// 但当前二进制**未**用 `--features ort` 编译。fail-closed 启动失败,绝不静默跳过
     /// (否则用户感知"已启用注入检测"实际未生效是安全事故)。
     #[error(
-        "injection classifier requested via --enable-injection-classifier, \
-         but vigil-hub-cli was not built with `--features ort`"
+        "the DeBERTa injection classifier (requested via `--enable-injection-classifier`) needs a \
+         build with `--features ort`, but this `vigil-hub` was not built with it. Use the ML \
+         variant `vigils-cli-ml-<platform>` from the releases page, or rebuild with `--features ort`."
     )]
     InjectionClassifierUnavailable,
 

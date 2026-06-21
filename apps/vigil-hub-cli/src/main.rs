@@ -485,7 +485,12 @@ fn main() -> std::process::ExitCode {
                 };
                 match setup::run(&setup_args) {
                     Ok(report) => {
-                        let code = print_setup_report(&setup_args, &report);
+                        // ISS-20260621-002:status 还需报告 MCP-wrap 保护层(只看 hook 会误报
+                        // `--mcp` turnkey 用户未保护)。best-effort 取 home 统计已 wrap 的 server 数。
+                        let mcp_wrapped = dirs::home_dir()
+                            .map(|h| setup_mcp::wrapped_server_count(&h))
+                            .unwrap_or(0);
+                        let code = print_setup_report(&setup_args, &report, mcp_wrapped);
                         // 其余 agent 的 hook 注册面(Codex/Gemini/Cursor):检测到才注册,逐面诚实
                         // 报告。ledger 用 Claude 面已解析出的同一路径(审计链单账本)。
                         let op = if setup_args.status {
@@ -1538,7 +1543,11 @@ fn print_json_agent_apply(r: &setup_mcp::JsonAgentApplyReport, op: &str) {
 }
 
 /// 打印 setup/status 的人类可读报告(ASCII-safe,cp936/cp437 不乱码)。返回退出码。
-fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process::ExitCode {
+fn print_setup_report(
+    args: &SetupArgs,
+    r: &setup::SetupReport,
+    mcp_wrapped: usize,
+) -> std::process::ExitCode {
     use setup::ProtectionState;
     if args.status {
         let self_test = setup::doctor_self_test();
@@ -1551,24 +1560,40 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
                 "not detected (neither ~/.claude nor ~/.claude.json found)"
             }
         );
-        // 诚实分级:Active 仅当托管条目存在且 command 未漂移且 exe 存在(Codex R1 HIGH)。
-        match r.state {
-            ProtectionState::Active => {
-                println!("  Protection:    ACTIVE");
-                println!("  Hook command:  {}", r.hook_command);
-                println!("  Audit ledger:  {}", r.ledger.display());
-            }
-            ProtectionState::Stale => {
-                println!("  Protection:    INSTALLED but STALE");
-                println!(
-                    "                 the registered hook points at a different binary/ledger,"
-                );
-                println!("                 or a missing executable. Re-run `vigil-hub setup` to refresh.");
-            }
-            ProtectionState::NotInstalled => {
-                println!("  Protection:    not installed");
-            }
+        // 总体保护 = 原生 hook 活跃 **或** 至少一个 MCP server 被 Vigil 网关 wrap(ISS-20260621-002:
+        // 两层任一即受保护;此前只看 hook 的 ProtectionState,致 `setup --mcp` turnkey 用户被误报未保护)。
+        // 诚实分级:hook Active 仅当托管条目存在且 command 未漂移且 exe 存在(Codex R1 HIGH)。
+        let hook_active = r.state == ProtectionState::Active;
+        let overall_active = hook_active || mcp_wrapped > 0;
+        if overall_active {
+            println!("  Protection:    ACTIVE");
+        } else if r.state == ProtectionState::Stale {
+            println!("  Protection:    INSTALLED but STALE");
+        } else {
+            println!("  Protection:    not installed");
         }
+        // 分层明细:两条防护面各自可见(原生工具输入侧 hook + MCP 网关逐 server wrap)。
+        println!(
+            "  Native hook:   {}",
+            match r.state {
+                ProtectionState::Active => "active",
+                ProtectionState::Stale =>
+                    "STALE - points at a different binary/ledger; re-run `vigil-hub setup`",
+                ProtectionState::NotInstalled => "not installed",
+            }
+        );
+        println!(
+            "  MCP gateway:   {}",
+            if mcp_wrapped > 0 {
+                format!("{mcp_wrapped} server(s) wrapped")
+            } else {
+                "no servers wrapped".to_string()
+            }
+        );
+        if hook_active {
+            println!("  Hook command:  {}", r.hook_command);
+        }
+        println!("  Audit ledger:  {}", r.ledger.display());
         println!(
             "  Self-test:     {}",
             if self_test {
@@ -1577,8 +1602,10 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
                 "FAIL - the hook did NOT block a synthetic credential (please report)"
             }
         );
-        if r.state != ProtectionState::Active && r.claude_detected {
-            println!("\n  Run `vigil-hub setup` to turn on protection.");
+        if !overall_active && r.claude_detected {
+            println!(
+                "\n  Run `vigil-hub setup` (native-tool hook) or `vigil-hub setup --mcp --apply` (MCP gateway) to turn on protection."
+            );
         }
         // self-test 失败是真问题 → 非零退出
         return if self_test {
