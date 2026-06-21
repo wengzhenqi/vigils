@@ -1117,7 +1117,7 @@ fn print_setup_all(
     // [1/2] hook(原生工具输入侧 secret 拦截)
     if !hook.claude_detected {
         println!(
-            "  [1/2] hook: Claude Code not detected (claude not on PATH, ~/.claude not found) -- hook step skipped"
+            "  [1/2] hook: Claude Code not detected (claude not on PATH; neither ~/.claude nor ~/.claude.json found) -- hook step skipped"
         );
     } else if op == "uninstall" {
         let did = if hook.changed {
@@ -1548,7 +1548,7 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
             if r.claude_detected {
                 "detected"
             } else {
-                "not detected (~/.claude not found)"
+                "not detected (neither ~/.claude nor ~/.claude.json found)"
             }
         );
         // 诚实分级:Active 仅当托管条目存在且 command 未漂移且 exe 存在(Codex R1 HIGH)。
@@ -1604,7 +1604,7 @@ fn print_setup_report(args: &SetupArgs, r: &setup::SetupReport) -> std::process:
     // install
     println!("Vigil setup");
     if !r.claude_detected {
-        println!("  Claude Code:   not detected (claude not on PATH, ~/.claude not found)");
+        println!("  Claude Code:   not detected (claude not on PATH; neither ~/.claude nor ~/.claude.json found)");
         println!("  Nothing to do. Install Claude Code, then re-run `vigil-hub setup`.");
         println!("  (For other agents, use the MCP gateway: `vigil-hub serve --stdio`.)");
         return std::process::ExitCode::SUCCESS;

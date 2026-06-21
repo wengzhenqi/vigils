@@ -213,9 +213,17 @@ pub(crate) fn agent_installed(config_dir: &Path, binary: Option<&str>) -> bool {
     config_dir.is_dir() || binary.is_some_and(binary_on_path)
 }
 
-/// Claude Code 是否"已安装"= `~/.claude/` 目录存在 或 `claude` 二进制在 PATH。
+/// Claude Code 是否"已安装"= `~/.claude/` 目录存在 **或** `~/.claude.json` 用户级配置文件存在
+/// **或** `claude` 二进制在 PATH。
+///
+/// **修 ISS-20260621-001(QA HIGH)**:此前只查 `~/.claude/` 目录 + `claude` PATH,漏了
+/// `~/.claude.json` —— 而 [`setup_mcp`] 的 MCP 步正是读/改 `~/.claude.json`。导致同一条
+/// `setup --all` 对"Claude Code 是否在场"两步判定**矛盾**:MCP 步据 `~/.claude.json` 成功
+/// wrap,hook 步却判"未检测到"而跳过,最终仍打印 "Protected" —— 而 Claude 的原生工具 secret
+/// 守门 hook 实际缺失(虚假保护承诺)。`~/.claude.json` 是 Claude Code 用户级配置(MCP / projects
+/// / oauth),其存在即 Claude Code 在场 → hook 应安装(install 路径会按需创建 `~/.claude/`)。
 fn claude_detected(home: &Path) -> bool {
-    agent_installed(&home.join(CLAUDE_DIR), Some("claude"))
+    agent_installed(&home.join(CLAUDE_DIR), Some("claude")) || home.join(".claude.json").is_file()
 }
 
 /// 解析默认 ledger 路径(与 desktop `ledger_path::resolve_ledger_path` 同语义,
@@ -1233,6 +1241,25 @@ mod tests {
         assert!(
             !claude_settings_path(td.path()).exists(),
             "no config created for undetected agent"
+        );
+    }
+
+    /// ISS-20260621-001 守门:`~/.claude.json`(Claude Code 用户级配置)存在即视 Claude Code 在场,
+    /// hook 步不再跳过 —— 此前只查 `~/.claude/` 目录 + `claude` PATH 漏了它,致同一条 `setup --all`
+    /// 的 MCP 步(读 `~/.claude.json`)wrap 成功而 hook 步跳过,却仍打印 "Protected"(原生工具守门缺失)。
+    #[test]
+    fn detected_when_claude_json_exists() {
+        let td = tempfile::TempDir::new().unwrap();
+        std::fs::write(td.path().join(".claude.json"), "{\"mcpServers\":{}}").unwrap();
+        let rep = run_with(&SetupArgs::default(), td.path(), &exe(), &ledger()).unwrap();
+        assert!(
+            rep.claude_detected,
+            "~/.claude.json 存在应判定 Claude Code 在场(与 MCP 步一致)"
+        );
+        assert!(rep.changed, "检测到即应安装 hook");
+        assert!(
+            claude_settings_path(td.path()).exists(),
+            "hook 应写入 ~/.claude/settings.json(install 路径按需创建 ~/.claude/)"
         );
     }
 
