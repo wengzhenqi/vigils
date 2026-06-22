@@ -8,6 +8,35 @@ Vigils 的所有重要变更记录于此。格式遵循
 
 ---
 
+## [v0.3.0] — 2026-06-22 — 远端 HTTP/SSE MCP 上游(OAuth/Bearer)+ 防篡改 OAuth 信任链 + 锚定自动核对
+
+首个把**远端 HTTP MCP 服务器**纳入 Vigil 防火墙的版本,外加对新 OAuth 路径的两项审计完整性加固。
+每个安全关键改动都经过对抗式审查。
+
+### Added
+
+- **HTTP / SSE MCP 上游(ADR 0021)。** 经 Streamable HTTP(`application/json` 或 `text/event-stream`)
+  可达的远端 MCP 服务器,现在流经 Vigil 的传输无关 chokepoint,因而继承与本地 stdio 服务器同等的保障:
+  防火墙 default-deny、`secret://` detokenize、结果脱敏、审计。三种鉴权来源,均经一个 sealed planner
+  (无法把传入的 `Authorization` 头 passthrough 给上游):`none`(public)、plain **Bearer**
+  (`env:`/`keyring:` 静态 token)、**OAuth**(`serve` 启动时从 `add-remote-mcp` 已落库的 token 经授权
+  服务器 re-discovery 重建 —— 无需浏览器)。mcp URL **与** OAuth discovery 端点均过 SSRF denylist +
+  no-redirect;OAuth 对未 onboard / 异源 / SSRF / issuer 漂移一律 fail-closed。
+- **启动时自动核对审计锚定(ADR 0020)。** 防篡改锚点此前已在网关关闭时自动 emit(v0.1.32),但只由手动
+  `vigil-hub verify` 命令核对。`serve` 现在启动时也自动核对 checkpoint 锚定(异步、不阻塞、stderr-only、
+  warn-only)—— turnkey 用户无需手动运行任何命令,即可在发生整链重写时被告警(补齐了 emit 自动、verify
+  却只手动的非对称缺口)。
+
+### Changed(安全)
+
+- **OAuth token metadata 现绑入审计哈希链。** `oauth_token_metadata` 行(issuer / authorization-server /
+  resource)是 OAuth token 验证的信任根,此前却在审计链外 —— 本地 DB 攻击者可篡改而不被发现。现在按
+  存储的 `event_id` 绑定到一条审计事件,读时校验(`verify_chain` + payload 比对),故 naive 篡改、绑定
+  事件删除、伪造 append 均被检出。(诚实定界:达到与账本其余状态同级的篡改**可检测性**;防住完整一致
+  重写的篡改**证明**需外部锚定 —— 见 ADR 0020 / `vigil-hub verify`。)
+
+---
+
 ## [v0.2.2] — 2026-06-21 — status 报告 MCP-wrap 防护 + ML 引擎错误文案更清晰 + 发布流程加固
 
 v0.2.1 的小幅跟进,来自一次全局代码审计 + 真机 QA:两个面向用户的 CLI 修复、一个 flaky 测试修复,

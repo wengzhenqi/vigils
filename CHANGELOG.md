@@ -8,6 +8,40 @@ All notable changes to Vigils are documented here. The format follows
 
 ---
 
+## [v0.3.0] — 2026-06-22 — remote HTTP/SSE MCP upstreams (OAuth/Bearer) + tamper-evident OAuth trust chain + automatic anchor verification
+
+The first release to put **remote HTTP MCP servers** behind Vigil's firewall, plus two audit-integrity
+hardenings to the new OAuth path. Every security-critical change went through adversarial review.
+
+### Added
+
+- **HTTP / SSE MCP upstreams (ADR 0021).** Remote MCP servers reachable over Streamable HTTP
+  (`application/json` or `text/event-stream`) now flow through Vigil's transport-blind chokepoint, so
+  they inherit the same guarantees as local stdio servers: firewall default-deny, `secret://`
+  detokenize, result redaction, and audit. Three auth sources, all via a sealed planner that cannot
+  pass an incoming `Authorization` header through to the upstream: `none` (public), plain **Bearer**
+  (`env:`/`keyring:` static token), and **OAuth** (rebuilt at `serve` startup from the
+  `add-remote-mcp`-persisted token via AS re-discovery — no browser). SSRF denylist + no-redirect
+  apply to the mcp URL **and** the OAuth discovery endpoints; OAuth fails closed on
+  not-onboarded / wrong-origin / SSRF / issuer drift.
+- **Automatic audit-anchor verification at startup (ADR 0020).** The tamper-anchor was already
+  emitted automatically on shutdown but only verified by the manual `vigil-hub verify` command.
+  `serve` now also verifies the checkpoint anchor automatically at startup (async, non-blocking,
+  stderr-only, warn-only) — so a turnkey user is warned about a full-chain rewrite without having to
+  run anything.
+
+### Changed (security)
+
+- **OAuth token metadata is now bound into the audit hash chain.** The `oauth_token_metadata` rows
+  (issuer / authorization-server / resource) are the root of OAuth token verification but previously
+  lived outside the audit chain — a local DB attacker could flip them undetected. They are now bound
+  to an audit event by stored `event_id` and verified (`verify_chain` + payload compare) on read, so
+  naive tampering, binding-event deletion, and forged-append are all detected. (Honest scope: this
+  reaches the same tamper-*evidence* as the rest of the ledger; tamper-*proofing* against a full
+  consistent rewrite needs external anchoring — see ADR 0020 / `vigil-hub verify`.)
+
+---
+
 ## [v0.2.2] — 2026-06-21 — status MCP-wrap reporting + clearer ML-engine error + release hardening
 
 A small follow-up to v0.2.1, from a global code audit + real-machine QA: two user-facing CLI fixes,
