@@ -96,6 +96,8 @@ testable and composed by the **Hub** (the MCP gateway).
 
 ## Installation
 
+> **New here? → [Install guide: which file to download + first-run steps](https://duncatzat.github.io/vigils/getting-started/installation.html)** ([中文](https://duncatzat.github.io/vigils/getting-started/installation.zh-CN.html)) — a 1-minute, pick-your-OS walkthrough (incl. the unsigned-app prompt on Windows/macOS).
+
 **Quickest** — install the CLI in one line, then jump to [Quick Start](#quick-start):
 
 ```bash
