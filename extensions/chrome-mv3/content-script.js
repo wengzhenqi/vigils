@@ -28,8 +28,8 @@
 //
 // 已知简化(留给 α3 / β):
 //   - α3:popup 展示最近 N 条 finding + 用户临时豁免
-//   - β:Enter submit allow 后走真实 trusted submit event(当前仍 `execCommand insertLineBreak`,
-//     R1 标为可接受 MVP 折衷,β Playwright E2E 覆盖后再换)
+//   - β:contenteditable Enter 提交仍缺可靠的自动续发原语;当前 confirm/allow 均 fail-closed
+//     给出显式 toast,用户确认后需手动再次触发发送
 
 (() => {
     "use strict";
@@ -1081,7 +1081,7 @@
                 return;
             }
             if (
-                (resp.action === "redact" || resp.action === "confirm_redact") &&
+                resp.action === "confirm_redact" &&
                 typeof resp.redacted_text === "string"
             ) {
                 const safeText = toDisplayRedactedText(resp.redacted_text);
@@ -1189,7 +1189,7 @@
                 return;
             }
             if (
-                (resp.action === "redact" || resp.action === "confirm_redact") &&
+                resp.action === "confirm_redact" &&
                 typeof resp.redacted_text === "string"
             ) {
                 showRiskPrompt(resp, (redactedText) => {
@@ -1285,6 +1285,15 @@
         }
     }
 
+    function continueContenteditableSubmit(target, message) {
+        if (target instanceof HTMLElement) setInputVigilState(target, "block");
+        showToast(
+            message ||
+                "Vigils: 当前页面无法自动继续发送，请确认内容后手动再次发送。",
+            "warn",
+        );
+    }
+
     document.addEventListener(
         "submit",
         async (ev) => {
@@ -1310,7 +1319,7 @@
                 return;
             }
             if (
-                (resp.action === "redact" || resp.action === "confirm_redact") &&
+                resp.action === "confirm_redact" &&
                 typeof resp.redacted_text === "string"
             ) {
                 if (primaryInput) {
@@ -1365,14 +1374,14 @@
             ev.stopPropagation();
             const resp = await callBackground("submit", text);
             if (resp.action === "allow") {
-                // 放行 —— 重新 dispatch 一个 Enter(避免触发本 listener 递归:dispatch 的事件
-                // 在 capture 阶段也会到本 handler,但 isTrusted=false,站点代码未必处理;
-                // MVP 简化:直接调用 document.execCommand("insertLineBreak") 让用户手动 submit)
-                document.execCommand("insertLineBreak");
+                continueContenteditableSubmit(
+                    target,
+                    "Vigils: 已允许本次内容，请确认内容后手动再次发送。",
+                );
                 return;
             }
             if (
-                (resp.action === "redact" || resp.action === "confirm_redact") &&
+                resp.action === "confirm_redact" &&
                 typeof resp.redacted_text === "string"
             ) {
                 const ad = adaptTarget(target);
@@ -1389,8 +1398,10 @@
                         currentAdapter,
                         toDisplayRedactedText(redactedText),
                     );
-                    document.execCommand("insertLineBreak");
-                    showToast("Vigils: 已脱敏后写入", "info");
+                    continueContenteditableSubmit(
+                        target,
+                        "Vigils: 已脱敏后写入，请确认内容后手动再次发送。",
+                    );
                 });
                 return;
             }

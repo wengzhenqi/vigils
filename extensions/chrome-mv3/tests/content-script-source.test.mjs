@@ -26,3 +26,14 @@ test("block-only UI does not include allow-once wording", () => {
     assert.match(source, /showBlockPrompt/);
     assert.doesNotMatch(source, /本次允许/);
 });
+
+test("content script rejects legacy redact action aliases", () => {
+    assert.doesNotMatch(source, /resp\.action === "redact"/);
+});
+
+test("contenteditable confirm-redact continuation does not insert a line break", () => {
+    assert.doesNotMatch(
+        source,
+        /showRiskPrompt\(resp,\s*\(redactedText\)\s*=>\s*\{[\s\S]{0,1200}?insertLineBreak/,
+    );
+});
