@@ -5,6 +5,7 @@ export function decideRisk(request, findings) {
         request && typeof request.request_id === "string" ? request.request_id : "";
     const text = request && typeof request.text === "string" ? request.text : "";
     const cleanFindings = Array.isArray(findings) ? findings : [];
+    const hasHighRiskFinding = cleanFindings.some((finding) => finding && finding.severity === "high");
 
     if (cleanFindings.length === 0) {
         return {
@@ -15,12 +16,13 @@ export function decideRisk(request, findings) {
         };
     }
 
-    if (cleanFindings.some((finding) => finding.redactable !== true)) {
+    if (hasHighRiskFinding) {
         return {
             request_id: requestId,
             action: "block",
             findings: cleanFindings,
             source: "consumer_js",
+            error: "high_risk",
         };
     }
 

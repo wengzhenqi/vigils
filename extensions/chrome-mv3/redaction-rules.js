@@ -82,6 +82,18 @@ function replaceAll(text, pattern, replacer) {
     return text.replace(pattern, replacer);
 }
 
+function selectedKindsFor(text, findings) {
+    if (Array.isArray(findings) && findings.length > 0) {
+        return new Set(
+            findings
+                .map((finding) => finding && finding.kind)
+                .filter((kind) => typeof kind === "string" && kind.length > 0),
+        );
+    }
+
+    return new Set(scanText(text).map((finding) => finding.kind));
+}
+
 function patternMatches(pattern, text) {
     pattern.lastIndex = 0;
     const matched = pattern.test(text);
@@ -125,18 +137,19 @@ export function scanText(text) {
     return findings;
 }
 
-export function redactText(text) {
+export function redactText(text, findings) {
     if (typeof text !== "string" || text.length === 0) return "";
 
     let redacted = text;
+    const kinds = selectedKindsFor(text, findings);
 
     const envRule = findRule("env_assignment");
-    if (envRule) {
+    if (envRule && kinds.has(envRule.kind)) {
         redacted = replaceAll(redacted, envRule.pattern, redactAssignment);
     }
 
     for (const rule of RULES) {
-        if (!rule.redactable || rule.kind === "env_assignment") continue;
+        if (!rule.redactable || rule.kind === "env_assignment" || !kinds.has(rule.kind)) continue;
         redacted = replaceAll(redacted, rule.pattern, `[REDACTED ${rule.kind}]`);
     }
 

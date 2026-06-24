@@ -32,6 +32,21 @@ test("scanText detects and redacts common consumer secrets", () => {
     assert.equal(hasFindings(redacted), false);
 });
 
+test("redactText only redacts the selected finding kinds", () => {
+    const text = [
+        "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyzABCDE1234567890",
+        "token ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD",
+    ].join(" ");
+
+    const redacted = redactText(text, [
+        { kind: "github_token", severity: "medium", redactable: true },
+    ]);
+
+    assert.match(redacted, /\[REDACTED github_token\]/);
+    assert.equal(redacted.includes("ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD"), false);
+    assert.equal(redacted.includes("sk-proj-abcdefghijklmnopqrstuvwxyzABCDE1234567890"), true);
+});
+
 test("decideRisk returns confirm_redact for redactable findings", () => {
     const text = "token ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD";
     const findings = scanText(text);
@@ -42,6 +57,19 @@ test("decideRisk returns confirm_redact for redactable findings", () => {
     assert.equal(result.action, "confirm_redact");
     assert.deepEqual(result.findings.map((f) => f.kind), ["github_token"]);
     assert.match(result.redacted_text, /\[REDACTED github_token\]/);
+});
+
+test("medium non-redactable findings block as redaction failures", () => {
+    const text = "legacy token with no safe rewrite";
+    const findings = [
+        { kind: "legacy_secret", severity: "medium", redactable: false },
+    ];
+
+    const result = decideRisk({ request_id: REQUEST_ID, text }, findings);
+
+    assert.equal(result.action, "block");
+    assert.equal(result.error, "redaction_failed");
+    assert.equal(result.redacted_text, undefined);
 });
 
 test("PEM private key is block-only", () => {
@@ -59,6 +87,25 @@ test("PEM private key is block-only", () => {
     assert.equal(findings[0].redactable, false);
     assert.equal(result.action, "block");
     assert.equal(result.redacted_text, undefined);
+    assert.equal(result.error, "high_risk");
+});
+
+test("mixed high-risk and redactable findings block without redacted text", () => {
+    const text = [
+        "-----BEGIN PRIVATE KEY-----",
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC",
+        "-----END PRIVATE KEY-----",
+        " token ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD",
+    ].join("\n");
+
+    const findings = scanText(text);
+    const result = decideRisk({ request_id: REQUEST_ID, text }, findings);
+
+    assert.equal(findings.some((finding) => finding.kind === "pem_private_key"), true);
+    assert.equal(findings.some((finding) => finding.kind === "github_token"), true);
+    assert.equal(result.action, "block");
+    assert.equal(result.redacted_text, undefined);
+    assert.equal(result.error, "high_risk");
 });
 
 test("safe text is allowed", () => {
