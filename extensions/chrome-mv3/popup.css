@@ -126,6 +126,14 @@ header .subtitle {
   background: var(--muted);
 }
 
+.mode-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 12px;
+  font-size: 12px;
+}
+
 .actions {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);

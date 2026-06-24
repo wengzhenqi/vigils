@@ -43,25 +43,16 @@
   word-break: break-all;
 }
 
-.install-cmd {
-  margin: 0;
-  padding: 10px 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 11px;
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.6;
+.mode-row {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
 }
 
-.action-row {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.mode-row label {
+  font-weight: 700;
 }
+
 .copy-hint {
   color: var(--success);
   font-size: 11px;
@@ -69,6 +60,17 @@
   transition: opacity 0.2s;
 }
 .copy-hint.fade {
+  opacity: 0;
+}
+
+.hint {
+  color: #64748b;
+  font-size: 12px;
+  min-height: 1em;
+  transition: opacity 0.2s;
+}
+
+.hint.fade {
   opacity: 0;
 }
 

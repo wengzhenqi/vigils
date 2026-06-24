@@ -10,40 +10,58 @@
 <body class="options-body">
   <header>
     <h1>Vigils 选项</h1>
-    <span class="subtitle">配置 / 注册助手</span>
+    <span class="subtitle">配置保护模式与网站权限</span>
   </header>
 
   <section class="section">
     <h2>扩展 ID</h2>
     <p class="desc">
-      用这个 ID 向 Native Host 注册本扩展(<code>allowed_origins</code> 白名单)。
+      用于排查问题或后续企业 provider 对接时识别当前扩展实例。
     </p>
     <div class="id-row">
       <code id="extension-id" class="id-value">—</code>
       <button id="copy-id-btn" type="button">复制</button>
     </div>
+    <p id="extension-id-hint" class="hint"></p>
   </section>
 
   <section class="section">
-    <h2>Native Host 注册命令</h2>
-    <p class="desc">
-      在已构建 <code>vigil-native-host</code> 二进制的机器上,**一次性**运行:
-    </p>
-    <pre id="install-cmd" class="install-cmd" aria-label="install command"></pre>
-    <div class="action-row">
-      <button id="copy-cmd-btn" type="button">复制命令</button>
-      <span id="copy-cmd-hint" class="copy-hint"></span>
+    <h2>保护模式</h2>
+    <div class="mode-row">
+      <label>
+        <input type="radio" name="vigil-mode" value="consumer">
+        普通模式
+      </label>
+      <p>检测在浏览器内完成，原文不会离开浏览器。</p>
     </div>
-    <details class="more">
-      <summary>其它子命令</summary>
-      <ul>
-        <li><code id="uninstall-cmd"></code> —— 卸载 Host manifest / 注册表(幂等)</li>
-        <li><code id="status-cmd"></code> —— 查当前注册状态</li>
-      </ul>
-      <p class="desc">
-        完整参考:<code>vigil-native-host --help</code>
-      </p>
-    </details>
+    <div class="mode-row">
+      <label>
+        <input type="radio" name="vigil-mode" value="enterprise">
+        企业模式
+      </label>
+      <p>启用企业 provider 接口。第一版未配置 provider 时仍使用普通保护。</p>
+    </div>
+    <p id="mode-hint" class="hint"></p>
+  </section>
+
+  <section id="enterprise-section" class="section hidden">
+    <h2>企业连接</h2>
+    <label for="enterprise-provider-type">Provider 类型</label>
+    <select id="enterprise-provider-type" disabled>
+      <option value="disabled">尚未配置</option>
+      <option value="native_host">Native Host</option>
+      <option value="localhost">Localhost Agent</option>
+      <option value="https_api">企业 HTTPS API</option>
+      <option value="wasm">浏览器内 Wasm</option>
+    </select>
+
+    <label for="enterprise-data-policy">数据策略</label>
+    <select id="enterprise-data-policy" disabled>
+      <option value="local_only">local_only：不发送原文</option>
+      <option value="metadata_only">metadata_only：只发送元数据</option>
+      <option value="raw_allowed">raw_allowed：允许发送原文</option>
+    </select>
+    <p class="hint">企业连接能力已预留，真实 provider 将在后续版本接入。</p>
   </section>
 
   <section class="section">

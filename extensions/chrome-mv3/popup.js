@@ -18,6 +18,7 @@
     const installHint = document.getElementById("install-hint");
     const statusPill = document.getElementById("status-pill");
     const statusLabel = document.getElementById("status-label");
+    const modeLabel = document.getElementById("mode-label");
     // α4 exempt UI refs
     const exemptLabel = document.getElementById("exempt-label");
     const exemptRemaining = document.getElementById("exempt-remaining");
@@ -107,6 +108,16 @@
         });
     }
 
+    function refreshMode() {
+        chrome.runtime.sendMessage({ type: "vigil_get_mode" }, (resp) => {
+            if (chrome.runtime.lastError) return;
+            const mode = resp && resp.mode === "enterprise" ? "enterprise" : "consumer";
+            if (modeLabel) {
+                modeLabel.textContent = mode === "enterprise" ? "企业保护" : "普通保护";
+            }
+        });
+    }
+
     // 事件绑定:addEventListener 非 inline onclick(CSP `script-src 'self'` 下 inline
     // handler 也会被拒;addEventListener 总是 self-hosted 安全)
     clearBtn.addEventListener("click", () => {
@@ -120,6 +131,7 @@
         refresh();
         refreshExempt();
         refreshTier();
+        refreshMode();
     });
 
     optionsLink.addEventListener("click", (ev) => {
@@ -355,6 +367,7 @@
         refreshExempt();
         refresh();
         refreshTier();
+        refreshMode();
     })();
 
     // popup 是短命 document,不需要 MutationObserver;但偶尔用户让 popup 开着时
@@ -363,5 +376,6 @@
         refresh();
         refreshExempt();
         refreshTier();
+        refreshMode();
     }, 2000);
 })();
