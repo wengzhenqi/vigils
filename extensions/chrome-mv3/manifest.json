@@ -12,7 +12,6 @@
     "128": "icons/icon-128.png"
   },
   "permissions": [
-    "nativeMessaging",
     "activeTab",
     "storage",
     "scripting"

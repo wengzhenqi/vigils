@@ -36,6 +36,7 @@ import {
     applyTierDecision,
 } from "./tier-decision.js";
 import { normalizeCustomSiteInput } from "./custom-sites.js";
+import { checkWithScannerPipeline } from "./scanner-pipeline.js";
 
 const NATIVE_HOST_NAME = "com.vigil.host";
 const MAX_TEXT_CHARS = 32 * 1024 * 1024; // 32 MB 字符早退;Host 1 MB 帧上限由 Host 自己规范化拒绝
@@ -43,6 +44,9 @@ const REQUEST_TTL_MS = 10_000;
 const CUSTOM_SITES_STORAGE_KEY = "customProtectedSites";
 const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
 const TIER_STORAGE_KEY = "vigilTier";
+const MODE_STORAGE_KEY = "vigilMode";
+const MODE_VALUES = Object.freeze(["consumer", "enterprise"]);
+const MODE_DEFAULT = "consumer";
 const EXTENSION_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
 
 // ───────────────────────── v0.4 / ISS-007:3 档策略决策层 ─────────────────────────
@@ -71,6 +75,8 @@ const EXTENSION_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
 
 /** @type {string} 当前档位,in-memory session 级 */
 let currentTier = TIER_DEFAULT;
+/** @type {string} 当前模式,in-memory session 级 */
+let currentMode = MODE_DEFAULT;
 
 // ───────────────────────── 自定义目标网站白名单 ─────────────────────────
 //
@@ -99,6 +105,12 @@ async function loadStoredTier() {
     const got = await storageGet({ [TIER_STORAGE_KEY]: TIER_DEFAULT });
     const tier = got[TIER_STORAGE_KEY];
     currentTier = TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT;
+}
+
+async function loadStoredMode() {
+    const got = await storageGet({ [MODE_STORAGE_KEY]: MODE_DEFAULT });
+    const mode = got[MODE_STORAGE_KEY];
+    currentMode = MODE_VALUES.includes(mode) ? mode : MODE_DEFAULT;
 }
 
 async function loadCustomSites() {
@@ -515,6 +527,7 @@ function onHostDisconnect() {
 
 // ───────────────────────── 单 request 辅助 ─────────────────────────
 
+// Reserved for a future enterprise native_host provider. Consumer mode does not call this path.
 /**
  * 向 Native Host 发一次 check 请求,返回 Promise<Response>。
  * Response shape: `{ action, findings, redacted_text?, _error? }`;
@@ -649,13 +662,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     sendResponse(resp);
                     return null;
                 }
-                return checkWithHost({
-                    origin: msg.origin,
-                    event_kind: msg.event_kind,
-                    text: msg.text,
-                })
+                return checkWithScannerPipeline(
+                    {
+                        request_id: crypto.randomUUID(),
+                        origin: msg.origin,
+                        event_kind: msg.event_kind,
+                        text: msg.text,
+                    },
+                    {
+                        mode: currentMode,
+                        enterprise: { dataPolicy: "local_only" },
+                    },
+                )
                     .then((rawResp) => applyTierDecision(rawResp, currentTier))
-                    .then(sendResponse);
+                    .then((resp) => {
+                        recordFinding({
+                            ts: Date.now(),
+                            origin: msg.origin || "?",
+                            event_kind: msg.event_kind || "?",
+                            action: resp.action,
+                            findings: (resp.findings || []).map((finding) =>
+                                typeof finding === "string" ? finding : finding.kind,
+                            ),
+                        });
+                        sendResponse(resp);
+                    });
             })
             .catch(() => {
                 sendResponse({ action: "block", findings: [], _error: "guard_error" });
@@ -754,6 +785,27 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return false;
     }
 
+    if (msg.type === "vigil_get_mode") {
+        sendResponse({
+            mode: currentMode,
+            default: MODE_DEFAULT,
+            values: MODE_VALUES.slice(),
+        });
+        return false;
+    }
+
+    if (msg.type === "vigil_set_mode") {
+        const next = typeof msg.mode === "string" ? msg.mode : "";
+        if (!MODE_VALUES.includes(next)) {
+            sendResponse({ ok: false, _error: "invalid_mode" });
+            return false;
+        }
+        currentMode = next;
+        storageSet({ [MODE_STORAGE_KEY]: currentMode }).catch(() => {});
+        sendResponse({ ok: true, mode: currentMode });
+        return false;
+    }
+
     // ISS-007:popup/options 查询当前档位
     if (msg.type === "vigil_get_tier") {
         sendResponse({ tier: currentTier, default: TIER_DEFAULT, values: TIER_VALUES.slice() });
@@ -790,6 +842,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "local" && changes[CUSTOM_SITES_STORAGE_KEY]) {
         syncCustomContentScripts().catch(() => {});
     }
+    if (areaName === "local" && changes[MODE_STORAGE_KEY]) {
+        const next = changes[MODE_STORAGE_KEY].newValue;
+        currentMode = MODE_VALUES.includes(next) ? next : MODE_DEFAULT;
+    }
     if (areaName === "local" && changes[TIER_STORAGE_KEY]) {
         const next = changes[TIER_STORAGE_KEY].newValue;
         currentTier = TIER_VALUES.includes(next) ? next : TIER_DEFAULT;
@@ -806,6 +862,7 @@ if (chrome.permissions && chrome.permissions.onRemoved) {
 
 // ───────────────────────── service worker 生命周期 ─────────────────────────
 
+loadStoredMode().catch(() => {});
 loadStoredTier().catch(() => {});
 syncCustomContentScripts().catch(() => {});
 
@@ -821,6 +878,7 @@ self.addEventListener("activate", (event) => {
         event.waitUntil(
             Promise.all([
                 self.clients.claim(),
+                loadStoredMode(),
                 loadStoredTier(),
                 syncCustomContentScripts(),
             ]).catch(() => {}),
