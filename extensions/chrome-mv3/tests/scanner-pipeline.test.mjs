@@ -70,6 +70,36 @@ test("enterprise metadata_only policy does not pass raw text", async () => {
     assert.deepEqual(observedRequest.local_findings, ["openai_api_key", "env_assignment"]);
 });
 
+test("enterprise local_only policy does not pass raw text and is flagged", async () => {
+    let observedRequest;
+    const provider = {
+        name: "enterprise_test",
+        async check(req) {
+            observedRequest = req;
+            return {
+                request_id: req.request_id,
+                action: "allow",
+                findings: [],
+                source: "enterprise",
+            };
+        },
+    };
+
+    const result = await checkWithScannerPipeline(
+        request("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyzABCDE1234567890"),
+        {
+            mode: "enterprise",
+            enterprise: { provider, dataPolicy: "local_only" },
+        },
+    );
+
+    assert.equal(result.action, "confirm_redact");
+    assert.equal(Object.hasOwn(observedRequest, "text"), false);
+    assert.equal(observedRequest.local_only, true);
+    assert.equal(observedRequest.origin, "https://chatgpt.com");
+    assert.deepEqual(observedRequest.local_findings, ["openai_api_key", "env_assignment"]);
+});
+
 test("configured but unavailable enterprise provider fails closed", async () => {
     const provider = {
         name: "enterprise_down",

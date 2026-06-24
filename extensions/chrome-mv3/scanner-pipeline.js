@@ -89,7 +89,12 @@ export async function checkWithScannerPipeline(request, options = {}) {
     const dataPolicy = enterpriseConfig.dataPolicy || "local_only";
 
     let enterpriseRequest = metadataOnlyRequest(request, localResult);
-    if (dataPolicy === "raw_allowed") {
+    if (dataPolicy === "local_only") {
+        enterpriseRequest = {
+            ...enterpriseRequest,
+            local_only: true,
+        };
+    } else if (dataPolicy === "raw_allowed") {
         enterpriseRequest = request;
     }
 
