@@ -57,10 +57,28 @@
         }
     }
 
+    function enableGuard() {
+        globalThis.__vigilBrowserGuardDisabled = false;
+        for (const el of document.querySelectorAll(
+            "input, textarea, [contenteditable='true'], [role='textbox']",
+        )) {
+            if (el instanceof HTMLElement && adaptTarget(el)) {
+                setInputVigilState(el, "guarded");
+            }
+        }
+    }
+
     chrome.runtime.onMessage.addListener((msg) => {
-        if (!msg || msg.type !== "vigil_disable_guard") return false;
+        if (!msg || typeof msg.type !== "string") return false;
         if (typeof msg.origin === "string" && msg.origin !== ORIGIN) return false;
-        disableGuard();
+        if (msg.type === "vigil_disable_guard") {
+            disableGuard();
+            return false;
+        }
+        if (msg.type === "vigil_enable_guard") {
+            enableGuard();
+            return false;
+        }
         return false;
     });
 

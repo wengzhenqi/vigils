@@ -271,6 +271,15 @@ function sendDisableGuardMessage(tabId, origin) {
     });
 }
 
+function sendEnableGuardMessage(tabId, origin) {
+    return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, { type: "vigil_enable_guard", origin }, () => {
+            void chrome.runtime.lastError;
+            resolve();
+        });
+    });
+}
+
 function forceDisableGuard(tabId, origin) {
     return new Promise((resolve) => {
         chrome.scripting.executeScript(
@@ -298,9 +307,11 @@ function forceDisableGuard(tabId, origin) {
 async function injectCustomSiteIntoOpenTabs(pattern) {
     if (!chrome.tabs || !chrome.scripting) return;
     const tabs = await tabsQuery({ url: pattern });
+    const origin = pattern.endsWith("/*") ? pattern.slice(0, -2) : "";
     for (const tab of tabs) {
         if (typeof tab.id === "number") {
             await executeContentScript(tab.id);
+            await sendEnableGuardMessage(tab.id, origin);
         }
     }
 }
