@@ -58,3 +58,15 @@ test("consumer UI and background do not expose page exemption bypass", () => {
     assert.doesNotMatch(source, /allow_exempt/);
     assert.doesNotMatch(source, /豁免/);
 });
+
+test("popup no longer exposes tier controls", () => {
+    const html = read("extensions/chrome-mv3/popup.html");
+    const js = read("extensions/chrome-mv3/popup.js");
+    const css = read("extensions/chrome-mv3/popup.css");
+    const popupSource = [html, js, css].join("\n");
+    assert.doesNotMatch(html, /data-tier=/);
+    assert.doesNotMatch(html, /保护档位/);
+    assert.doesNotMatch(popupSource, /recall-first/);
+    assert.doesNotMatch(popupSource, /vigil_set_tier/);
+    assert.doesNotMatch(popupSource, /vigilTier/);
+});

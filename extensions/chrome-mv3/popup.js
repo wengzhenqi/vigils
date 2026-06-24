@@ -122,7 +122,6 @@
 
     refreshBtn.addEventListener("click", () => {
         refresh();
-        refreshTier();
         refreshMode();
     });
 
@@ -141,100 +140,17 @@
         statusPill.classList.toggle("status-pill-muted", tone === "muted");
     }
 
-    // ISS-007:tier 快速切换;复用 options 页同一 SW 消息,不新增权限 / storage。
-    const tierButtons = Array.from(document.querySelectorAll(".tier-btn"));
-    const tierHintEl = document.getElementById("tier-hint");
-    let currentTier = null;
-    let tierSwitchPending = false;
-    const TIER_STORAGE_KEY = "vigilTier";
-    const TIER_DEFAULT = "balanced";
-    const TIER_VALUES = ["strict", "balanced", "recall-first"];
-
-    function setTierHint(msg, tone) {
-        if (!tierHintEl) return;
-        tierHintEl.textContent = msg || "";
-        tierHintEl.classList.toggle("tier-hint-warn", tone === "warn");
-    }
-
-    function renderTier(tier) {
-        currentTier = tier || null;
-        for (const btn of tierButtons) {
-            const active = btn.dataset.tier === currentTier;
-            btn.classList.toggle("tier-btn-active", active);
-            btn.setAttribute("aria-pressed", active ? "true" : "false");
-            btn.disabled = tierSwitchPending;
-        }
-        if (currentTier) setTierHint(currentTier, "ok");
-    }
-
-    function refreshTier() {
-        if (tierSwitchPending) return;
-        chrome.storage.local.get({ [TIER_STORAGE_KEY]: TIER_DEFAULT }, (got) => {
-            if (chrome.runtime.lastError) {
-                renderTier(null);
-                setTierHint("档位未知", "warn");
-                return;
-            }
-            const tier = got[TIER_STORAGE_KEY];
-            renderTier(TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT);
-        });
-    }
-
-    function setTier(next, callback) {
-        if (!TIER_VALUES.includes(next)) {
-            callback({ ok: false, _error: "invalid_tier" });
-            return;
-        }
-        chrome.storage.local.set({ [TIER_STORAGE_KEY]: next }, () => {
-            if (chrome.runtime.lastError) {
-                callback({
-                    ok: false,
-                    _error: chrome.runtime.lastError.message || "runtime_error",
-                });
-                return;
-            }
-            // Best-effort wake/update for an already-running service worker. Storage is
-            // the source of truth, so this callback must not gate UI success.
-            chrome.runtime.sendMessage({ type: "vigil_set_tier", tier: next }, () => {
-                void chrome.runtime.lastError;
-            });
-            callback({ ok: true, tier: next });
-        });
-    }
-
-    for (const btn of tierButtons) {
-        btn.addEventListener("click", () => {
-            const next = btn.dataset.tier;
-            if (!next || next === currentTier) return;
-            tierSwitchPending = true;
-            for (const b of tierButtons) b.disabled = true;
-            setTierHint("切换中...");
-            setTier(next, (resp) => {
-                tierSwitchPending = false;
-                if (!resp || !resp.ok) {
-                    renderTier(currentTier);
-                    setTierHint(`切换失败:${(resp && resp._error) || "unknown"}`, "warn");
-                    return;
-                }
-                renderTier(resp.tier);
-                refresh();
-            });
-        });
-    }
-
-    // 首次渲染:最近记录 + 档位 + 模式
+    // 首次渲染:最近记录 + 模式
     (() => {
         setHeaderStatus("保护中", "ok");
         refresh();
-        refreshTier();
         refreshMode();
     })();
 
     // popup 是短命 document,不需要 MutationObserver;但偶尔用户让 popup 开着时
-    // 手动触发一次再渲染无害 —— 2s 一次轻量 refresh(同步 findings + tier)
+    // 手动触发一次再渲染无害 —— 2s 一次轻量 refresh(同步 findings + mode)
     setInterval(() => {
         refresh();
-        refreshTier();
         refreshMode();
     }, 2000);
 })();
