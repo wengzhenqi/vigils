@@ -271,12 +271,14 @@ function sendDisableGuardMessage(tabId, origin) {
     });
 }
 
-function forceDisableGuard(tabId) {
+function forceDisableGuard(tabId, origin) {
     return new Promise((resolve) => {
         chrome.scripting.executeScript(
             {
                 target: { tabId, allFrames: true },
-                func: () => {
+                args: [origin],
+                func: (expectedOrigin) => {
+                    if (location.origin !== expectedOrigin) return;
                     globalThis.__vigilBrowserGuardDisabled = true;
                     for (const el of document.querySelectorAll(
                         "[data-vigil-toast], [data-vigil-safe-prompt]",
@@ -309,7 +311,7 @@ async function disableCustomSiteInOpenTabs(pattern, origin) {
     for (const tab of tabs) {
         if (typeof tab.id === "number") {
             await sendDisableGuardMessage(tab.id, origin);
-            await forceDisableGuard(tab.id);
+            await forceDisableGuard(tab.id, origin);
         }
     }
 }
@@ -645,7 +647,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     .then(sendResponse);
             })
             .catch(() => {
-                sendResponse({ action: "allow", findings: [], _disabled: true });
+                sendResponse({ action: "block", findings: [], _error: "guard_error" });
             });
         return true; // 异步响应(MV3 要求 listener return true 保持 sendResponse 有效)
     }
