@@ -83,7 +83,7 @@ function replaceAll(text, pattern, replacer) {
 }
 
 function selectedKindsFor(text, findings) {
-    if (Array.isArray(findings) && findings.length > 0) {
+    if (Array.isArray(findings)) {
         return new Set(
             findings
                 .map((finding) => finding && finding.kind)
@@ -101,9 +101,13 @@ function patternMatches(pattern, text) {
     return matched;
 }
 
-function redactAssignment(match) {
+function redactAssignment(match, selectedKinds) {
     const equalIndex = match.indexOf("=");
     if (equalIndex < 0) return "[REDACTED env_assignment]";
+
+    if (selectedKinds.size === 1 && selectedKinds.has("env_assignment")) {
+        return "[REDACTED env_assignment]";
+    }
 
     const key = match.slice(0, equalIndex);
     const value = match.slice(equalIndex + 1);
@@ -145,7 +149,7 @@ export function redactText(text, findings) {
 
     const envRule = findRule("env_assignment");
     if (envRule && kinds.has(envRule.kind)) {
-        redacted = replaceAll(redacted, envRule.pattern, redactAssignment);
+        redacted = replaceAll(redacted, envRule.pattern, (match) => redactAssignment(match, kinds));
     }
 
     for (const rule of RULES) {

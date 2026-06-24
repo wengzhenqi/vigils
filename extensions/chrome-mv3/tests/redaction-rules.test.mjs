@@ -47,6 +47,25 @@ test("redactText only redacts the selected finding kinds", () => {
     assert.equal(redacted.includes("sk-proj-abcdefghijklmnopqrstuvwxyzABCDE1234567890"), true);
 });
 
+test("redactText with an explicit empty findings array leaves text unchanged", () => {
+    const text = "token ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD";
+
+    const redacted = redactText(text, []);
+
+    assert.equal(redacted, text);
+});
+
+test("env_assignment-only findings redact as env_assignment", () => {
+    const text = "OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyzABCDE1234567890";
+
+    const redacted = redactText(text, [
+        { kind: "env_assignment", severity: "medium", redactable: true },
+    ]);
+
+    assert.match(redacted, /\[REDACTED env_assignment\]/);
+    assert.equal(redacted.includes("[REDACTED openai_api_key]"), false);
+});
+
 test("decideRisk returns confirm_redact for redactable findings", () => {
     const text = "token ghp_abcdefghijklmnopqrstuvwxyz1234567890ABCD";
     const findings = scanText(text);
