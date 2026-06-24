@@ -43,3 +43,21 @@ test("mode runtime messages exist", () => {
     assert.match(backgroundSource, /msg\.type\s*===\s*"vigil_get_mode"/);
     assert.match(backgroundSource, /msg\.type\s*===\s*"vigil_set_mode"/);
 });
+
+test("consumer checks no longer apply user-selectable tier overrides", () => {
+    assert.doesNotMatch(
+        backgroundSource,
+        /applyTierDecision/,
+        "ordinary consumer checks must use the scanner result directly",
+    );
+    assert.doesNotMatch(
+        backgroundSource,
+        /vigilTier/,
+        "ordinary consumer mode must not read a user-selectable tier from storage",
+    );
+});
+
+test("background no longer exposes tier runtime messages", () => {
+    assert.doesNotMatch(backgroundSource, /vigil_get_tier/);
+    assert.doesNotMatch(backgroundSource, /vigil_set_tier/);
+});

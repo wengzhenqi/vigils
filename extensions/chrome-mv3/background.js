@@ -20,50 +20,16 @@
 //   §I-9.3  特权 scheme 由 service worker fail-closed 早退
 //   §I-9.5  本层做 32 MB 明显超大早退,避免扩展消息处理异常影响 SW 存活
 
-// ISS-007:3 档策略决策纯函数从 tier-decision.js 导入,SW + Node 单测共用模块
-import {
-    TIER_VALUES,
-    TIER_DEFAULT,
-    applyTierDecision,
-} from "./tier-decision.js";
 import { normalizeCustomSiteInput } from "./custom-sites.js";
 import { checkWithScannerPipeline } from "./scanner-pipeline.js";
 
 const MAX_TEXT_CHARS = 32 * 1024 * 1024; // 32 MB 字符早退,避免超大文本拖垮 SW 消息处理
 const CUSTOM_SITES_STORAGE_KEY = "customProtectedSites";
 const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
-const TIER_STORAGE_KEY = "vigilTier";
 const MODE_STORAGE_KEY = "vigilMode";
 const MODE_VALUES = Object.freeze(["consumer", "enterprise"]);
 const MODE_DEFAULT = "consumer";
 const EXTENSION_ORIGIN = `chrome-extension://${chrome.runtime.id}`;
-
-// ───────────────────────── v0.4 / ISS-007:3 档策略决策层 ─────────────────────────
-//
-// scanner 返回的原始 action 是硬指纹层裁决结果:
-//   - "allow" = 无任何 finding → 放行(tier 不 override)
-//   - "confirm_redact" = 命中可脱敏 finding → 已返 redacted_text(tier 按策略 override 为 block 或放行)
-//   - "block" = 无法 redact / 严重拒绝 → block(tier 不 override,已是最严)
-//
-// 三档语义(Round 2 roadmap §Stage 1 MVP):
-//   - strict (公开 AI 网站 / 最严):命中 secret 一律 block(不接受 redact 继续 paste)
-//   - balanced (默认):confirm_redact 交给页面内弹窗确认(脱敏后继续,最佳 UX)
-//   - recall-first (企业外发 / 工单 / 邮件 / 最宽谨慎):多类命中(≥2 distinct)或 secret 均 block
-//
-// **重要**:3 档策略**只收紧**,**绝不放宽**。即:
-//   - scanner 返 block → 任何档仍 block(不 override)
-//   - scanner 返 allow → 任何档仍 allow(tier 不改放行)
-//   - scanner 返 confirm_redact → tier 仅能 override 为 block(不能 override 为 allow)
-// 这保证 tier 是**纵深防御**一层,而不是 tier 本身就是漏洞。
-//
-// 持久化:tier 存 chrome.storage.local,用于绕开 MV3 popup → SW sendMessage 冷启动抖动。
-// storage 中只保存档位字符串,不含页面原文。
-//
-// `TIER_VALUES` / `TIER_DEFAULT` / `applyTierDecision` 从 `tier-decision.js` 导入,
-// 跟 Node 单测共用同一实现(与 feedback_production_logic_testable 纪律一致)。
-
-/** @type {string} 当前档位,in-memory session 级 */
-let currentTier = TIER_DEFAULT;
 /** @type {string} 当前模式,in-memory session 级 */
 let currentMode = MODE_DEFAULT;
 
@@ -88,12 +54,6 @@ function storageSet(value) {
             }
         });
     });
-}
-
-async function loadStoredTier() {
-    const got = await storageGet({ [TIER_STORAGE_KEY]: TIER_DEFAULT });
-    const tier = got[TIER_STORAGE_KEY];
-    currentTier = TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT;
 }
 
 async function loadStoredMode() {
@@ -403,7 +363,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     // VIGIL-SEC-006(security audit defense-in-depth):只接受本扩展自身(content scripts /
     // popup / options)的消息。manifest 无 externally_connectable,web 页本就无法 sendMessage;
-    // 此守门把该信任假设显式化,防止未来误加 externally_connectable 后外部 web 源操纵 tier /
+    // 此守门把该信任假设显式化,防止未来误加 externally_connectable 后外部 web 源操纵
     // 模式状态。sender.id 由 Chrome 运行时填充,不可由发送方伪造。
     if (!isTrustedExtensionSender(sender)) return false;
 
@@ -431,7 +391,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                         enterprise: { dataPolicy: "local_only" },
                     },
                 )
-                    .then((rawResp) => applyTierDecision(rawResp, currentTier))
                     .then((resp) => {
                         recordFinding({
                             ts: Date.now(),
@@ -513,26 +472,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return false;
     }
 
-    // ISS-007:popup/options 查询当前档位
-    if (msg.type === "vigil_get_tier") {
-        sendResponse({ tier: currentTier, default: TIER_DEFAULT, values: TIER_VALUES.slice() });
-        return false;
-    }
-
-    // ISS-007:popup/options 切换档位;白名单校验,非法值拒绝(不 fall-back 到 default,
-    // 让调用方感知错误)
-    if (msg.type === "vigil_set_tier") {
-        const next = typeof msg.tier === "string" ? msg.tier : "";
-        if (!TIER_VALUES.includes(next)) {
-            sendResponse({ ok: false, _error: "invalid_tier" });
-            return false;
-        }
-        currentTier = next;
-        storageSet({ [TIER_STORAGE_KEY]: currentTier }).catch(() => {});
-        sendResponse({ ok: true, tier: currentTier });
-        return false;
-    }
-
     return false; // 未识别消息:让其它可能的 listener 处理或自然 timeout
 });
 
@@ -543,10 +482,6 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "local" && changes[MODE_STORAGE_KEY]) {
         const next = changes[MODE_STORAGE_KEY].newValue;
         currentMode = MODE_VALUES.includes(next) ? next : MODE_DEFAULT;
-    }
-    if (areaName === "local" && changes[TIER_STORAGE_KEY]) {
-        const next = changes[TIER_STORAGE_KEY].newValue;
-        currentTier = TIER_VALUES.includes(next) ? next : TIER_DEFAULT;
     }
 });
 
@@ -561,7 +496,6 @@ if (chrome.permissions && chrome.permissions.onRemoved) {
 // ───────────────────────── service worker 生命周期 ─────────────────────────
 
 loadStoredMode().catch(() => {});
-loadStoredTier().catch(() => {});
 syncCustomContentScripts().catch(() => {});
 
 self.addEventListener("install", () => {
@@ -577,7 +511,6 @@ self.addEventListener("activate", (event) => {
             Promise.all([
                 self.clients.claim(),
                 loadStoredMode(),
-                loadStoredTier(),
                 syncCustomContentScripts(),
             ]).catch(() => {}),
         );
