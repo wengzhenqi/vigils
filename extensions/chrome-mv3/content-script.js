@@ -27,7 +27,7 @@
 //   - primaryInput 不可定位时(heterogeneous form)仍降级 block,保留 fail-safe 语义
 //
 // 已知简化(留给 α3 / β):
-//   - α3:popup 展示最近 N 条 finding + 用户临时豁免
+//   - α3:popup 展示最近 N 条 finding
 //   - β:contenteditable Enter 提交仍缺可靠的自动续发原语;当前 confirm/allow 均 fail-closed
 //     给出显式 toast,用户确认后需手动再次触发发送
 

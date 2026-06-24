@@ -59,16 +59,22 @@ export function canonicalFindingKind(kind) {
     return FINDING_KIND_ALIASES[kind] || kind;
 }
 
+function findingKind(finding) {
+    if (typeof finding === "string") return finding;
+    if (finding && typeof finding.kind === "string") return finding.kind;
+    return "";
+}
+
 /**
  * 应用 3 档决策层。
  *
  * **不变量**(纵深防御必保):
  *   - tier 只能 **收紧**,不能放宽
- *   - NH 返 allow → 任何档仍 allow
- *   - NH 返 block → 任何档仍 block
- *   - NH 返 redact → tier 可 override 为 block;不可 override 为 allow
+ *   - scanner 返 allow → 任何档仍 allow
+ *   - scanner 返 block → 任何档仍 block
+ *   - scanner 返 confirm_redact → tier 可 override 为 block;不可 override 为 allow
  *
- * @param {{action:string, findings:string[], redacted_text?:string}} resp NH 原响应
+ * @param {{action:string, findings:Array<string|{kind:string}>, redacted_text?:string}} resp scanner 原响应
  * @param {string} tier TIER_VALUES 之一;非法值按 balanced(fail-safe)
  * @returns {object} 决策后响应;override 场景加 `_tier_override` 标签便于审计
  */
@@ -84,8 +90,8 @@ export function applyTierDecision(resp, tier) {
         return resp;
     }
 
-    // redact 路径:按 tier 决策
-    const canonicalFindings = findings.map(canonicalFindingKind);
+    // confirm_redact / legacy redact 路径:按 tier 决策。
+    const canonicalFindings = findings.map(findingKind).map(canonicalFindingKind).filter(Boolean);
     const hasSecret = canonicalFindings.some((f) => SECRET_KINDS.has(f));
     const distinctKinds = new Set(canonicalFindings).size;
 

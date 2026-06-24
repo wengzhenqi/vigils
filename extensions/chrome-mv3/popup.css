@@ -274,12 +274,6 @@ button:hover {
 .tag-block {
   background: var(--error);
 }
-/* α4:allow_exempt —— 用户主动豁免(session-scoped),视觉介于 warning 和 success 之间,
-   让审计员能在条目列表快速识别"这不是守门放行,是用户豁免"。 */
-.tag-allow_exempt {
-  background: var(--warn);
-  color: #111827;
-}
 .meta-line {
   color: var(--muted);
 }
