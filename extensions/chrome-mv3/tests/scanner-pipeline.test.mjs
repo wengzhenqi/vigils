@@ -25,6 +25,18 @@ test("consumer mode uses local JS provider and returns confirm_redact", async ()
     assert.deepEqual(result.findings.map((f) => f.kind), ["github_token"]);
 });
 
+test("consumer mode offers redaction confirmation for token assignments", async () => {
+    const result = await checkWithScannerPipeline(
+        request("token=ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"),
+        { mode: "consumer" },
+    );
+
+    assert.equal(result.action, "confirm_redact");
+    assert.equal(result.source, "consumer_js");
+    assert.deepEqual(result.findings.map((f) => f.kind), ["github_token"]);
+    assert.equal(result.redacted_text, "token=[REDACTED github_token]");
+});
+
 test("mergeScanResults keeps the strictest action", () => {
     const merged = mergeScanResults("rid", [
         { request_id: "rid", action: "allow", findings: [], source: "consumer_js" },
