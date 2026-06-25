@@ -126,32 +126,6 @@ header .subtitle {
   background: var(--muted);
 }
 
-.actions {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-.actions-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-.count-block {
-  flex: 1;
-}
-.count-title {
-  display: block;
-  color: var(--muted);
-  font-size: 11px;
-}
-.count-label {
-  display: block;
-  color: var(--fg);
-  font-size: 20px;
-  font-weight: 750;
-  line-height: 1.1;
-}
 button {
   background: var(--panel);
   color: #334155;
@@ -164,61 +138,89 @@ button {
 button:hover {
   background: var(--panel-soft);
 }
-.actions a {
+
+.primary-btn {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.primary-btn:hover {
+  background: var(--accent-strong);
+}
+.ghost-btn {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--muted);
+}
+.onboarding-card,
+.page-card,
+#findings-section {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.onboarding-card {
+  display: grid;
+  gap: 10px;
+}
+.onboarding-card h2 {
+  margin: 0;
+  font-size: 14px;
+}
+.onboarding-card ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+}
+.onboarding-card li {
+  margin: 2px 0;
+}
+.page-card {
+  display: grid;
+  gap: 8px;
+}
+.section-label {
+  color: var(--muted);
+  font-size: 11px;
+}
+.page-card strong,
+.section-head strong {
+  display: block;
+  color: var(--fg);
+  font-size: 16px;
+  line-height: 1.25;
+}
+.page-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.page-card .primary-btn {
+  justify-self: start;
+}
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.footer-nav {
+  padding: 10px 16px 0;
+  background: var(--panel);
+}
+.footer-nav a {
   color: var(--accent);
   text-decoration: none;
   font-size: 12px;
 }
-.actions a:hover {
+.footer-nav a:hover {
   text-decoration: underline;
-}
-.tier-switch {
-  position: relative;
-}
-.tier-buttons {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel-soft);
-}
-.tier-btn {
-  min-width: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  padding: 6px 4px;
-  font-size: 12px;
-}
-.tier-btn-active {
-  color: #ffffff;
-  background: var(--accent);
-  font-weight: 700;
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
-}
-.tier-btn:disabled {
-  cursor: default;
-  opacity: 0.65;
-}
-.tier-hint {
-  display: block;
-  min-height: 16px;
-  margin-top: 5px;
-  color: var(--accent);
-  font-size: 10px;
-  text-align: right;
-}
-.tier-hint-warn {
-  color: var(--warn);
 }
 
 #findings-section {
-  padding: 14px 16px;
   min-height: 96px;
-  background: var(--panel);
 }
 .empty-hint {
   color: var(--muted);
@@ -238,20 +240,20 @@ button:hover {
   padding: 0;
 }
 .findings-list li {
-  padding: 8px 0;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border);
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 6px 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .findings-list li:last-child {
   border-bottom: none;
 }
 .tag {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
   font-size: 10px;
   font-weight: 600;
   line-height: 1.4;
@@ -266,31 +268,9 @@ button:hover {
 .tag-block {
   background: var(--error);
 }
-/* α4:allow_exempt —— 用户主动豁免(session-scoped),视觉介于 warning 和 success 之间,
-   让审计员能在条目列表快速识别"这不是守门放行,是用户豁免"。 */
-.tag-allow_exempt {
-  background: var(--warn);
-  color: #111827;
-}
 .meta-line {
-  color: var(--muted);
-}
-.meta-line code {
-  font-family: var(--mono);
-  font-size: 10px;
-  color: var(--fg);
-}
-.findings-inline {
   margin-top: 2px;
-}
-.findings-inline code {
-  display: inline-block;
-  padding: 0 4px;
-  margin: 1px 2px 0 0;
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  font-family: var(--mono);
-  font-size: 10px;
+  color: var(--muted);
 }
 
 footer {
@@ -300,52 +280,6 @@ footer {
   background: var(--panel);
   color: var(--muted);
   font-size: 10px;
-}
-
-/* α4 exempt section */
-.exempt-section {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-}
-.exempt-status {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-  font-size: 13px;
-}
-#exempt-label {
-  color: var(--fg);
-  font-weight: 650;
-}
-#exempt-label.exempt-active {
-  color: var(--warn);
-  font-weight: 600;
-}
-.exempt-remaining {
-  color: var(--warn);
-  font-family: var(--mono);
-  font-size: 10px;
-}
-.exempt-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.exempt-actions button {
-  padding: 7px 8px;
-  font-size: 12px;
-}
-#exempt-clear-btn {
-  grid-column: 1 / -1;
-  background: var(--error-bg);
-  border-color: var(--error);
-  color: var(--error);
-}
-#exempt-clear-btn:hover {
-  background: var(--error-bg);
 }
 
 @media (prefers-color-scheme: dark) {

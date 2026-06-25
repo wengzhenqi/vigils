@@ -7,7 +7,7 @@
 //   - 将候选文本 + origin + event_kind 送到 background service worker,
 //     收到 Response 后按 action 执行:
 //       "allow"  → 放行
-//       "redact" → 阻断原事件,用 Response.redacted_text 替换输入框文本,重新 dispatch 同类事件
+//       "confirm_redact" → 阻断原事件,待用户确认后用 Response.redacted_text 继续
 //       "block"  → 阻断事件,短暂提示用户
 //
 // 安全契约(ADR 0009 §I-9):
@@ -27,9 +27,9 @@
 //   - primaryInput 不可定位时(heterogeneous form)仍降级 block,保留 fail-safe 语义
 //
 // 已知简化(留给 α3 / β):
-//   - α3:popup 展示最近 N 条 finding + 用户临时豁免
-//   - β:Enter submit allow 后走真实 trusted submit event(当前仍 `execCommand insertLineBreak`,
-//     R1 标为可接受 MVP 折衷,β Playwright E2E 覆盖后再换)
+//   - α3:popup 展示最近 N 条 finding
+//   - β:contenteditable Enter 提交仍缺可靠的自动续发原语;当前 confirm/allow 均 fail-closed
+//     给出显式 toast,用户确认后需手动再次触发发送
 
 (() => {
     "use strict";
@@ -51,6 +51,7 @@
     function disableGuard() {
         globalThis.__vigilBrowserGuardDisabled = true;
         closeSafePrompt();
+        closeRiskPrompt();
         if (toastEl) toastEl.remove();
         for (const frame of document.querySelectorAll("[data-vigil-input-ring]")) {
             if (frame instanceof HTMLElement) clearInputVigilFrame(frame);
@@ -138,6 +139,242 @@
                 toastEl.style.transform = "translateY(8px)";
             }
         }, 4000);
+    }
+
+    let riskPromptEl = null;
+    let riskPromptTarget = null;
+    let riskPromptArrowEl = null;
+    function closeRiskPrompt() {
+        if (riskPromptEl) {
+            riskPromptEl.remove();
+            riskPromptEl = null;
+        }
+        riskPromptTarget = null;
+        riskPromptArrowEl = null;
+    }
+
+    function findingLabel(finding) {
+        const kind = typeof finding === "string" ? finding : finding && finding.kind;
+        const labels = {
+            openai_api_key: "OpenAI API key",
+            anthropic_api_key: "Anthropic API key",
+            google_api_key: "Google API key",
+            github_token: "GitHub token",
+            gitlab_pat: "GitLab token",
+            slack_webhook: "Slack webhook",
+            stripe_secret_key: "Stripe secret key",
+            aws_access_key_id: "AWS access key",
+            jwt: "JWT",
+            env_assignment: ".env 变量",
+            database_url: "数据库连接串",
+            pem_private_key: "私钥",
+        };
+        return labels[kind] || String(kind || "未知风险");
+    }
+
+    function primaryFindingLabel(findings) {
+        const first = findings && findings.length > 0 ? findings[0] : null;
+        return findingLabel(first || "风险内容");
+    }
+
+    function clampNumber(value, min, max) {
+        return Math.max(min, Math.min(value, max));
+    }
+
+    function positionRiskPrompt() {
+        if (!riskPromptEl) return;
+        const margin = 16;
+        const gap = 12;
+        const promptWidth = Math.min(
+            riskPromptEl.offsetWidth || 320,
+            window.innerWidth - margin * 2,
+        );
+        const promptHeight = riskPromptEl.offsetHeight || 156;
+
+        riskPromptEl.style.right = "auto";
+        riskPromptEl.style.bottom = "auto";
+
+        let left = window.innerWidth - promptWidth - margin;
+        let top = window.innerHeight - promptHeight - margin;
+        let placement = "fallback";
+
+        if (riskPromptTarget) {
+            const rect = riskPromptTarget.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                const fitsRight =
+                    rect.right + gap + promptWidth <= window.innerWidth - margin;
+                const fitsAbove = rect.top - gap - promptHeight >= margin;
+                const fitsBelow =
+                    rect.bottom + gap + promptHeight <= window.innerHeight - margin;
+
+                if (fitsRight) {
+                    placement = "right";
+                    left = rect.right + gap;
+                    top = rect.top + rect.height / 2 - promptHeight / 2;
+                } else if (fitsAbove) {
+                    placement = "above";
+                    left = rect.left + rect.width / 2 - promptWidth / 2;
+                    top = rect.top - promptHeight - gap;
+                } else if (fitsBelow) {
+                    placement = "below";
+                    left = rect.left + rect.width / 2 - promptWidth / 2;
+                    top = rect.bottom + gap;
+                }
+            }
+        }
+
+        left = clampNumber(left, margin, window.innerWidth - promptWidth - margin);
+        top = clampNumber(top, margin, window.innerHeight - promptHeight - margin);
+        riskPromptEl.style.left = `${left}px`;
+        riskPromptEl.style.top = `${top}px`;
+        riskPromptEl.setAttribute("data-vigil-placement", placement);
+
+        if (riskPromptArrowEl) {
+            Object.assign(riskPromptArrowEl.style, {
+                display: placement === "fallback" ? "none" : "block",
+                left: "auto",
+                right: "auto",
+                top: "auto",
+                bottom: "auto",
+                transform: "rotate(45deg)",
+                border: "0",
+            });
+            if (placement === "right") {
+                Object.assign(riskPromptArrowEl.style, {
+                    left: "-6px",
+                    top: "calc(50% - 6px)",
+                    borderLeft: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderBottom: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            } else if (placement === "above") {
+                Object.assign(riskPromptArrowEl.style, {
+                    bottom: "-6px",
+                    left: "calc(50% - 6px)",
+                    borderRight: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderBottom: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            } else if (placement === "below") {
+                Object.assign(riskPromptArrowEl.style, {
+                    top: "-6px",
+                    left: "calc(50% - 6px)",
+                    borderLeft: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderTop: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            }
+        }
+    }
+
+    function mountPromptBase(title, findings, anchor) {
+        closeSafePrompt();
+        closeRiskPrompt();
+        const parent = document.body || document.documentElement;
+        if (!parent) return null;
+
+        const box = document.createElement("div");
+        box.setAttribute("data-vigil-risk-prompt", "");
+        box.setAttribute("role", "dialog");
+        box.setAttribute("aria-live", "polite");
+        Object.assign(box.style, {
+            position: "fixed",
+            right: "16px",
+            bottom: "16px",
+            zIndex: "2147483647",
+            width: "min(320px, calc(100vw - 32px))",
+            padding: "12px",
+            borderRadius: "10px",
+            background: "#ffffff",
+            color: "#111827",
+            boxShadow: "0 16px 36px rgba(15, 23, 42, 0.18)",
+            fontFamily: "system-ui, -apple-system, sans-serif",
+            fontSize: "13px",
+            lineHeight: "1.45",
+            border: "1px solid rgba(245, 158, 11, 0.24)",
+            boxSizing: "border-box",
+        });
+
+        const arrow = document.createElement("div");
+        arrow.setAttribute("data-vigil-risk-arrow", "");
+        Object.assign(arrow.style, {
+            position: "absolute",
+            width: "12px",
+            height: "12px",
+            background: "#ffffff",
+            boxSizing: "border-box",
+        });
+        box.appendChild(arrow);
+
+        const heading = document.createElement("div");
+        heading.style.fontWeight = "750";
+        heading.style.marginBottom = "6px";
+        heading.style.fontSize = "13px";
+        heading.textContent = title;
+        box.appendChild(heading);
+
+        const body = document.createElement("div");
+        body.style.color = "#374151";
+        body.textContent = "建议先脱敏再发送。";
+        box.appendChild(body);
+
+        const privacy = document.createElement("div");
+        privacy.style.marginTop = "6px";
+        privacy.style.color = "#6b7280";
+        privacy.textContent = "原文未离开你的浏览器。";
+        box.appendChild(privacy);
+
+        const actions = document.createElement("div");
+        actions.style.display = "flex";
+        actions.style.gap = "8px";
+        actions.style.marginTop = "12px";
+        actions.style.justifyContent = "flex-end";
+        box.appendChild(actions);
+
+        parent.appendChild(box);
+        riskPromptEl = box;
+        riskPromptArrowEl = arrow;
+        riskPromptTarget = getInputFrameTarget(anchor) || anchor;
+        positionRiskPrompt();
+        return actions;
+    }
+
+    function promptButton(label, tone) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        Object.assign(btn.style, {
+            border: "1px solid transparent",
+            borderRadius: "7px",
+            padding: "7px 10px",
+            cursor: "pointer",
+            fontWeight: "700",
+            fontSize: "12px",
+            color: tone === "primary" ? "#111827" : "#374151",
+            background: tone === "primary" ? "#f59e0b" : "#f3f4f6",
+            borderColor: tone === "primary" ? "#d97706" : "#e5e7eb",
+        });
+        return btn;
+    }
+
+    function showRiskPrompt(response, anchor, onRedact) {
+        const findings = response.findings || [];
+        const actions = mountPromptBase(`检测到 ${primaryFindingLabel(findings)}`, findings, anchor);
+        if (!actions) return;
+        const redactBtn = promptButton("脱敏后继续", "primary");
+        redactBtn.addEventListener("click", () => {
+            closeRiskPrompt();
+            onRedact(response.redacted_text || "");
+        });
+        const blockBtn = promptButton("阻断", "secondary");
+        blockBtn.addEventListener("click", closeRiskPrompt);
+        actions.append(redactBtn, blockBtn);
+    }
+
+    function showBlockPrompt(response, anchor) {
+        const findings = response.findings || [];
+        const actions = mountPromptBase(`已阻断 ${primaryFindingLabel(findings)}`, findings, anchor);
+        if (!actions) return;
+        const closeBtn = promptButton("关闭", "secondary");
+        closeBtn.addEventListener("click", closeRiskPrompt);
+        actions.appendChild(closeBtn);
     }
 
     let safePromptEl = null;
@@ -514,11 +751,17 @@
         "scroll",
         () => {
             clearTimeout(promptRepositionTimer);
-            promptRepositionTimer = setTimeout(positionSafePrompt, 16);
+            promptRepositionTimer = setTimeout(() => {
+                positionSafePrompt();
+                positionRiskPrompt();
+            }, 16);
         },
         true,
     );
-    window.addEventListener("resize", positionSafePrompt);
+    window.addEventListener("resize", () => {
+        positionSafePrompt();
+        positionRiskPrompt();
+    });
 
     // ───────────────────────── SW 请求 ─────────────────────────
 
@@ -959,34 +1202,27 @@
                 if (target instanceof HTMLElement) setInputVigilState(target, "guarded");
                 return;
             }
-            if (resp.action === "redact" && typeof resp.redacted_text === "string") {
+            if (
+                resp.action === "confirm_redact" &&
+                typeof resp.redacted_text === "string"
+            ) {
                 const safeText = toDisplayRedactedText(resp.redacted_text);
-                showSafeVersionPrompt({
-                    target,
-                    findings: resp.findings,
-                    onUse: () => {
-                        const currentAdapter = adaptTarget(target);
-                        if (!currentAdapter) return;
-                        if (currentAdapter.getText() !== latestAgain) {
-                            showToast("Vigils: 输入内容已变化,请重新触发安全检查。", "warn");
-                            return;
-                        }
-                        // 经 writeFieldByExtension 登记 lastWritten,随后的自写 input 事件
-                        // 按精确匹配跳过,保留 master 的防绕过语义。
-                        writeFieldByExtension(target, currentAdapter, safeText);
-                        showToast("Vigils 已使用安全版本替换输入内容。", "info");
-                    },
-                    onCancel: () => {
-                        showToast("Vigils 已取消本次安全替换。", "info");
-                    },
+                showRiskPrompt(resp, target, () => {
+                    const currentAdapter = adaptTarget(target);
+                    if (!currentAdapter) return;
+                    if (currentAdapter.getText() !== latestAgain) {
+                        showToast("Vigils: 输入内容已变化,请重新触发安全检查。", "warn");
+                        return;
+                    }
+                    writeFieldByExtension(target, currentAdapter, safeText);
+                    showToast("Vigils: 已脱敏后写入", "info");
                 });
                 return;
             }
 
             writeFieldByExtension(target, latestAdapter, "");
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            const reason = resp._error || (resp.findings || []).join(", ") || "block";
-            showToast(`Vigils: 输入内容被阻断(${reason})`, "error");
+            showBlockPrompt(resp, target);
         }, INPUT_DEBOUNCE_MS);
         inputChecks.set(target, next);
     }
@@ -1074,35 +1310,29 @@
                 if (target instanceof HTMLElement) setInputVigilState(target, "guarded");
                 return;
             }
-            if (resp.action === "redact" && typeof resp.redacted_text === "string") {
-                const safeText = toDisplayRedactedText(resp.redacted_text);
-                showSafeVersionPrompt({
-                    target,
-                    findings: resp.findings,
-                    onUse: () => {
-                        const currentAdapter = adaptTarget(target);
-                        if (!currentAdapter) return;
-                        if (
-                            pasteSnapshot &&
-                            currentAdapter.getText() !== pasteSnapshot.text
-                        ) {
-                            showToast("Vigils: 输入内容已变化,请重新粘贴安全版本。", "warn");
-                            return;
-                        }
-                        // 在快照位置插入显示归一后的脱敏文本(不抹掉框内既有内容)
-                        insertAtPasteSnapshot(target, currentAdapter, safeText, pasteSnapshot);
-                        showToast("Vigils 已插入安全版本。", "info");
-                    },
-                    onCancel: () => {
-                        showToast("Vigils 已取消本次粘贴。", "info");
-                    },
+            if (
+                resp.action === "confirm_redact" &&
+                typeof resp.redacted_text === "string"
+            ) {
+                showRiskPrompt(resp, target, (redactedText) => {
+                    const currentAdapter = adaptTarget(target);
+                    if (!currentAdapter) return;
+                    if (pasteSnapshot && currentAdapter.getText() !== pasteSnapshot.text) {
+                        showToast("Vigils: 输入内容已变化,请重新粘贴安全版本。", "warn");
+                        return;
+                    }
+                    insertAtPasteSnapshot(
+                        target,
+                        currentAdapter,
+                        toDisplayRedactedText(redactedText),
+                        pasteSnapshot,
+                    );
+                    showToast("Vigils: 已脱敏后写入", "info");
                 });
                 return;
             }
-            // block / 未知 action / 协议错误 —— fail-closed
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            const reason = resp._error || (resp.findings || []).join(", ") || "block";
-            showToast(`Vigils: 粘贴被阻断(${reason})`, "error");
+            showBlockPrompt(resp, target);
         },
         true, // 捕获阶段,抢先拿到 event
     );
@@ -1168,6 +1398,24 @@
     //     其他站点 listener 正常参与。本 listener 检查 allow-once 即短路
     const allowedOnce = new WeakSet();
 
+    function continueSubmit(form, submitter) {
+        allowedOnce.add(form);
+        if (typeof form.requestSubmit === "function") {
+            form.requestSubmit(submitter);
+        } else {
+            form.submit();
+        }
+    }
+
+    function continueContenteditableSubmit(target, message) {
+        if (target instanceof HTMLElement) setInputVigilState(target, "block");
+        showToast(
+            message ||
+                "Vigils: 当前页面无法自动继续发送，请确认内容后手动再次发送。",
+            "warn",
+        );
+    }
+
     document.addEventListener(
         "submit",
         async (ev) => {
@@ -1189,61 +1437,45 @@
             const resp = await callBackground("submit", text);
             if (resp.action === "allow") {
                 // 允许 —— 标 allow-once 并重新触发,保留站点 validation + 其他 listener
-                allowedOnce.add(form);
-                if (typeof form.requestSubmit === "function") {
-                    form.requestSubmit(submitter);
-                } else {
-                    // 极旧浏览器 fallback(MV3 要求 Chrome 120+,requestSubmit 一定有)
-                    form.submit();
-                }
+                continueSubmit(form, submitter);
                 return;
             }
-            if (resp.action === "redact" && typeof resp.redacted_text === "string") {
-                // α2:form-level redact 真写 —— 仅在 primaryInput 明确定位时执行,
-                // primaryInput=null(heterogeneous form)仍降级 block + 提示,保留 fail-safe
+            if (
+                resp.action === "confirm_redact" &&
+                typeof resp.redacted_text === "string"
+            ) {
                 if (primaryInput) {
                     const ad = adaptTarget(primaryInput);
-                    if (ad) {
-                        const safeText = toDisplayRedactedText(resp.redacted_text);
-                        const originalText = ad.getText();
-                        const site = getSiteAdapter();
-                        const siteLabel = site ? `[${site.label}] ` : "";
-                        showSafeVersionPrompt({
-                            target: primaryInput,
-                            findings: resp.findings,
-                            onUse: () => {
-                                const currentAdapter = adaptTarget(primaryInput);
-                                if (!currentAdapter) return;
-                                if (currentAdapter.getText() !== originalText) {
-                                    showToast(
-                                        "Vigils: 提交内容已变化,请重新触发安全检查。",
-                                        "warn",
-                                    );
-                                    return;
-                                }
-                                writeFieldByExtension(primaryInput, currentAdapter, safeText);
+                    const originalText = ad ? ad.getText() : "";
+                    showRiskPrompt(resp, primaryInput, (redactedText) => {
+                        if (primaryInput) {
+                            const currentAdapter = adaptTarget(primaryInput);
+                            if (!currentAdapter) return;
+                            if (currentAdapter.getText() !== originalText) {
                                 showToast(
-                                    `Vigils 已为${siteLabel || "当前输入"}应用安全版本，请确认后再提交。`,
-                                    "info",
+                                    "Vigils: 提交内容已变化,请重新触发安全检查。",
+                                    "warn",
                                 );
-                            },
-                            onCancel: () => {
-                                showToast("Vigils 已取消本次提交。", "info");
-                            },
-                        });
-                        return;
-                    }
+                                return;
+                            }
+                            writeFieldByExtension(
+                                primaryInput,
+                                currentAdapter,
+                                toDisplayRedactedText(redactedText),
+                            );
+                            continueSubmit(form, submitter);
+                            showToast("Vigils: 已脱敏后写入", "info");
+                        } else {
+                            showToast("Vigils: 无法定位输入框，已阻断", "error");
+                        }
+                    });
+                    return;
                 }
-                // primaryInput 不可用 → 降级 block
-                showToast(
-                    `Vigils 检测到 ${formatFindingList(resp.findings)}，但无法定位具体输入框完成脱敏。请手工清理后再提交。`,
-                    "warn",
-                );
+                showToast("Vigils: 无法定位输入框，已阻断", "error");
                 return;
             }
-            const reason = resp._error || (resp.findings || []).join(", ") || "block";
             if (primaryInput instanceof HTMLElement) setInputVigilState(primaryInput, "block");
-            showToast(`Vigils: 提交被阻断(${reason})`, "error");
+            showBlockPrompt(resp, primaryInput);
         },
         true,
     );
@@ -1264,43 +1496,39 @@
             ev.stopPropagation();
             const resp = await callBackground("submit", text);
             if (resp.action === "allow") {
-                // 放行 —— 重新 dispatch 一个 Enter(避免触发本 listener 递归:dispatch 的事件
-                // 在 capture 阶段也会到本 handler,但 isTrusted=false,站点代码未必处理;
-                // MVP 简化:直接调用 document.execCommand("insertLineBreak") 让用户手动 submit)
-                document.execCommand("insertLineBreak");
+                continueContenteditableSubmit(
+                    target,
+                    "Vigils: 已允许本次内容，请确认内容后手动再次发送。",
+                );
                 return;
             }
-            if (resp.action === "redact" && typeof resp.redacted_text === "string") {
+            if (
+                resp.action === "confirm_redact" &&
+                typeof resp.redacted_text === "string"
+            ) {
                 const ad = adaptTarget(target);
-                if (ad) {
-                    const safeText = toDisplayRedactedText(resp.redacted_text);
-                    const originalText = ad.getText();
-                    showSafeVersionPrompt({
+                const originalText = ad ? ad.getText() : "";
+                showRiskPrompt(resp, target, (redactedText) => {
+                    const currentAdapter = adaptTarget(target);
+                    if (!currentAdapter) return;
+                    if (currentAdapter.getText() !== originalText) {
+                        showToast("Vigils: 提交内容已变化,请重新触发安全检查。", "warn");
+                        return;
+                    }
+                    writeFieldByExtension(
                         target,
-                        findings: resp.findings,
-                        onUse: () => {
-                            const currentAdapter = adaptTarget(target);
-                            if (!currentAdapter) return;
-                            if (currentAdapter.getText() !== originalText) {
-                                showToast(
-                                    "Vigils: 提交内容已变化,请重新触发安全检查。",
-                                    "warn",
-                                );
-                                return;
-                            }
-                            writeFieldByExtension(target, currentAdapter, safeText);
-                            showToast("Vigils 已应用安全版本，请确认后再提交。", "info");
-                        },
-                        onCancel: () => {
-                            showToast("Vigils 已取消本次提交。", "info");
-                        },
-                    });
-                }
+                        currentAdapter,
+                        toDisplayRedactedText(redactedText),
+                    );
+                    continueContenteditableSubmit(
+                        target,
+                        "Vigils: 已脱敏后写入，请确认内容后手动再次发送。",
+                    );
+                });
                 return;
             }
-            const reason = resp._error || (resp.findings || []).join(", ") || "block";
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            showToast(`Vigils: 提交被阻断(${reason})`, "error");
+            showBlockPrompt(resp, target);
         },
         true,
     );
