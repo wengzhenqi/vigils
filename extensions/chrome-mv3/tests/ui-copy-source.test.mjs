@@ -70,3 +70,14 @@ test("popup no longer exposes tier controls", () => {
     assert.doesNotMatch(popupSource, /vigil_set_tier/);
     assert.doesNotMatch(popupSource, /vigilTier/);
 });
+
+test("options no longer exposes tier settings", () => {
+    const html = read("extensions/chrome-mv3/options.html");
+    const js = read("extensions/chrome-mv3/options.js");
+    const optionsSource = [html, js].join("\n");
+    assert.doesNotMatch(html, /守门档位/);
+    assert.doesNotMatch(html, /name="tier"/);
+    assert.doesNotMatch(optionsSource, /recall-first/);
+    assert.doesNotMatch(optionsSource, /vigil_set_tier/);
+    assert.doesNotMatch(optionsSource, /vigilTier/);
+});

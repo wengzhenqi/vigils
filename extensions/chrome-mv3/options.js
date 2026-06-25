@@ -15,11 +15,6 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
     const modeInputs = Array.from(document.querySelectorAll("input[name='vigil-mode']"));
     const modeHint = document.getElementById("mode-hint");
     const enterpriseSection = document.getElementById("enterprise-section");
-    const tierFieldset = document.getElementById("tier-fieldset");
-    const tierHint = document.getElementById("tier-hint");
-    const TIER_STORAGE_KEY = "vigilTier";
-    const TIER_DEFAULT = "balanced";
-    const TIER_VALUES = ["strict", "balanced", "recall-first"];
 
     const extId = chrome.runtime.id;
     idEl.textContent = extId || "(无法获取)";
@@ -188,41 +183,6 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         renderCustomSites(resp && resp.sites);
     }
 
-    function flashTierHint(msg, tone /* "ok" | "warn" */) {
-        tierHint.textContent = msg;
-        tierHint.style.color = tone === "warn" ? "#b45309" : "#15803d";
-        tierHint.classList.remove("fade");
-        clearTimeout(flashTierHint._t);
-        flashTierHint._t = setTimeout(() => {
-            tierHint.classList.add("fade");
-        }, 2000);
-    }
-
-    function setCheckedTier(tier) {
-        const input = tierFieldset.querySelector(`input[name="tier"][value="${tier}"]`);
-        if (input) input.checked = true;
-    }
-
-    function persistTier(next, callback) {
-        if (!TIER_VALUES.includes(next)) {
-            callback({ ok: false, _error: "invalid_tier" });
-            return;
-        }
-        chrome.storage.local.set({ [TIER_STORAGE_KEY]: next }, () => {
-            if (chrome.runtime.lastError) {
-                callback({
-                    ok: false,
-                    _error: chrome.runtime.lastError.message || "runtime_error",
-                });
-                return;
-            }
-            chrome.runtime.sendMessage({ type: "vigil_set_tier", tier: next }, () => {
-                void chrome.runtime.lastError;
-            });
-            callback({ ok: true, tier: next });
-        });
-    }
-
     copyIdBtn.addEventListener("click", async () => {
         const ok = await copyText(extId);
         flashExtensionIdHint(ok ? "ID 已复制" : "复制失败(请手工选中)", ok ? "ok" : "warn");
@@ -288,28 +248,6 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         } finally {
             customSiteAddBtn.disabled = false;
         }
-    });
-
-    chrome.storage.local.get({ [TIER_STORAGE_KEY]: TIER_DEFAULT }, (got) => {
-        if (chrome.runtime.lastError) {
-            flashTierHint("无法读取档位", "warn");
-            return;
-        }
-        const tier = got[TIER_STORAGE_KEY];
-        setCheckedTier(TIER_VALUES.includes(tier) ? tier : TIER_DEFAULT);
-    });
-
-    tierFieldset.addEventListener("change", (ev) => {
-        const tgt = ev.target;
-        if (!tgt || tgt.name !== "tier" || !tgt.checked) return;
-        const next = tgt.value;
-        persistTier(next, (resp) => {
-            if (!resp || !resp.ok) {
-                flashTierHint(`切换失败:${(resp && resp._error) || "unknown"}`, "warn");
-                return;
-            }
-            flashTierHint(`档位已切换为 ${resp.tier}`);
-        });
     });
 
     refreshMode();
