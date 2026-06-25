@@ -1,137 +1,82 @@
-// I09b-α3 popup:展示最近 findings(只读 in-memory 环形队列)+ 清空 + 跳转 options。
-//
-// 安全契约:
-//   - §I-9.1:findings 条目不含原文;只有 origin / event_kind / action / findings enum 列表 / ts
-//   - CSP `script-src 'self'`:所有 DOM 文本用 textContent(无 innerHTML / outerHTML),
-//     即使 origin 字段被后端污染也只作纯文本展示(XSS 安全)
-//   - popup 本身无 chrome.storage 依赖;findings 只读 SW 内存队列
+import { normalizeCustomSiteInput } from "./custom-sites.js";
 
+// 普通用户版 popup:当前页面保护状态 + 安全事件摘要。
+// 安全契约:只展示 origin / action / finding 类型等元数据,不读取或保存页面原文。
 (() => {
     "use strict";
+
+    const ONBOARDING_KEY = "vigilPopupOnboarded";
 
     const listEl = document.getElementById("findings-list");
     const emptyHintEl = document.getElementById("empty-hint");
     const countLabel = document.getElementById("count-label");
-    const refreshBtn = document.getElementById("refresh-btn");
     const clearBtn = document.getElementById("clear-btn");
     const optionsLink = document.getElementById("options-link");
     const statusPill = document.getElementById("status-pill");
     const statusLabel = document.getElementById("status-label");
-    const modeLabel = document.getElementById("mode-label");
+    const onboardingCard = document.getElementById("onboarding-card");
+    const onboardingDoneBtn = document.getElementById("onboarding-done-btn");
+    const pageStatusTitle = document.getElementById("page-status-title");
+    const pageStatusDetail = document.getElementById("page-status-detail");
+    const protectCurrentBtn = document.getElementById("protect-current-btn");
+
+    let currentPageSite = null;
 
     function fmtTs(ts) {
         try {
             return new Date(ts).toLocaleTimeString();
         } catch {
-            return String(ts);
+            return String(ts || "");
         }
     }
 
-    /**
-     * 渲染 findings 列表。**全程使用 DOM API + textContent**,严禁 innerHTML —
-     * origin / findings enum 值来自 Rust 端,按脱敏契约应不含恶意 HTML,但扩展 popup
-     * 作为信任边界内的 UI,仍保持"所有 backend 数据纯文本插入"不变量(与 I08b UI 一致)。
-     */
-    function renderFindings(items) {
-        // 清空 list(textContent = "" 安全清空,replaceChildren 更现代 + 清晰)
-        listEl.replaceChildren();
-
-        if (!Array.isArray(items) || items.length === 0) {
-            emptyHintEl.classList.remove("hidden");
-            listEl.classList.add("hidden");
-            countLabel.textContent = "0 条";
-            return;
-        }
-
-        emptyHintEl.classList.add("hidden");
-        listEl.classList.remove("hidden");
-        countLabel.textContent = `${items.length} 条`;
-
-        for (const it of items) {
-            const li = document.createElement("li");
-
-            // 第一列:action tag
-            const tag = document.createElement("span");
-            tag.className = `tag tag-${it.action || "block"}`;
-            tag.textContent = (it.action || "block").toUpperCase();
-            li.appendChild(tag);
-
-            // 第二列:meta + findings + ts
-            const col = document.createElement("div");
-
-            const metaLine = document.createElement("div");
-            metaLine.className = "meta-line";
-            const ts = document.createElement("code");
-            ts.textContent = fmtTs(it.ts);
-            metaLine.appendChild(ts);
-            metaLine.append(" · ");
-            const kind = document.createElement("span");
-            kind.textContent = it.event_kind || "?";
-            metaLine.appendChild(kind);
-            metaLine.append(" · ");
-            const origin = document.createElement("code");
-            origin.textContent = it.origin || "?";
-            metaLine.appendChild(origin);
-            col.appendChild(metaLine);
-
-            if (Array.isArray(it.findings) && it.findings.length > 0) {
-                const fLine = document.createElement("div");
-                fLine.className = "findings-inline";
-                for (const f of it.findings) {
-                    const c = document.createElement("code");
-                    c.textContent = String(f);
-                    fLine.appendChild(c);
+    function sendRuntimeMessage(msg) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage(msg, (resp) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ ok: false, _error: chrome.runtime.lastError.message });
+                    return;
                 }
-                col.appendChild(fLine);
-            }
-
-            li.appendChild(col);
-            listEl.appendChild(li);
-        }
-    }
-
-    function refresh() {
-        chrome.runtime.sendMessage({ type: "vigil_recent_findings" }, (resp) => {
-            if (chrome.runtime.lastError) {
-                // SW 冷启动时偶尔会 "Could not establish connection";静默,下次 refresh 再试
-                renderFindings([]);
-                return;
-            }
-            renderFindings((resp && resp.findings) || []);
+                resolve(resp || {});
+            });
         });
     }
 
-    function refreshMode() {
-        chrome.runtime.sendMessage({ type: "vigil_get_mode" }, (resp) => {
-            if (chrome.runtime.lastError) return;
-            const mode = resp && resp.mode === "enterprise" ? "enterprise" : "consumer";
-            if (modeLabel) {
-                modeLabel.textContent = mode === "enterprise" ? "企业保护" : "普通保护";
-            }
+    function queryActiveTab() {
+        return new Promise((resolve) => {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (chrome.runtime.lastError) {
+                    resolve(null);
+                    return;
+                }
+                resolve(Array.isArray(tabs) && tabs.length > 0 ? tabs[0] : null);
+            });
         });
     }
 
-    // 事件绑定:addEventListener 非 inline onclick(CSP `script-src 'self'` 下 inline
-    // handler 也会被拒;addEventListener 总是 self-hosted 安全)
-    clearBtn.addEventListener("click", () => {
-        chrome.runtime.sendMessage({ type: "vigil_clear_findings" }, () => {
-            // chrome.runtime.lastError 忽略,后续 refresh 自然反映空状态
-            refresh();
+    function permissionsContains(pattern) {
+        return new Promise((resolve) => {
+            chrome.permissions.contains({ origins: [pattern] }, (allowed) => {
+                if (chrome.runtime.lastError) {
+                    resolve(false);
+                    return;
+                }
+                resolve(Boolean(allowed));
+            });
         });
-    });
+    }
 
-    refreshBtn.addEventListener("click", () => {
-        refresh();
-        refreshMode();
-    });
-
-    optionsLink.addEventListener("click", (ev) => {
-        ev.preventDefault();
-        // MV3 正确姿势:chrome.runtime.openOptionsPage() 处理 pop-up / tab 两种场景
-        if (chrome.runtime.openOptionsPage) {
-            chrome.runtime.openOptionsPage();
-        }
-    });
+    function requestOriginPermission(pattern) {
+        return new Promise((resolve) => {
+            chrome.permissions.request({ origins: [pattern] }, (granted) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ granted: false, _error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve({ granted: Boolean(granted) });
+            });
+        });
+    }
 
     function setHeaderStatus(label, tone) {
         if (!statusPill || !statusLabel) return;
@@ -140,17 +85,212 @@
         statusPill.classList.toggle("status-pill-muted", tone === "muted");
     }
 
-    // 首次渲染:最近记录 + 模式
+    function setPageStatus(title, detail, tone, canProtect) {
+        pageStatusTitle.textContent = title;
+        pageStatusDetail.textContent = detail;
+        protectCurrentBtn.classList.toggle("hidden", !canProtect);
+        setHeaderStatus(title, tone);
+    }
+
+    function eventKindLabel(kind) {
+        const labels = {
+            paste: "粘贴时",
+            input: "输入时",
+            submit: "发送前",
+        };
+        return labels[kind] || "操作时";
+    }
+
+    function actionLabel(action) {
+        const labels = {
+            allow: "已放行",
+            confirm_redact: "已建议脱敏",
+            block: "已阻断",
+        };
+        return labels[action] || "已拦截";
+    }
+
+    function findingLabel(kind) {
+        const labels = {
+            openai_api_key: "OpenAI API Key",
+            anthropic_api_key: "Anthropic API Key",
+            google_api_key: "Google API Key",
+            github_token: "GitHub Token",
+            gitlab_pat: "GitLab Token",
+            slack_webhook: "Slack Webhook",
+            stripe_secret_key: "Stripe Secret Key",
+            aws_access_key_id: "AWS Access Key",
+            jwt: "JWT",
+            env_assignment: ".env 变量",
+            database_url: "数据库连接串",
+            pem_private_key: "私钥",
+        };
+        return labels[kind] || String(kind || "风险内容");
+    }
+
+    function renderFindings(items) {
+        listEl.replaceChildren();
+
+        if (!Array.isArray(items) || items.length === 0) {
+            emptyHintEl.classList.remove("hidden");
+            listEl.classList.add("hidden");
+            countLabel.textContent = "最近 0 条";
+            return;
+        }
+
+        emptyHintEl.classList.add("hidden");
+        listEl.classList.remove("hidden");
+        countLabel.textContent = `最近 ${items.length} 条`;
+
+        for (const it of items) {
+            const li = document.createElement("li");
+
+            const tag = document.createElement("span");
+            tag.className = `tag tag-${it.action || "block"}`;
+            tag.textContent = actionLabel(it.action);
+
+            const col = document.createElement("div");
+
+            const title = document.createElement("strong");
+            const findingNames = Array.isArray(it.findings) && it.findings.length > 0
+                ? it.findings.map(findingLabel).join("、")
+                : "风险内容";
+            title.textContent = `${eventKindLabel(it.event_kind)}检测到 ${findingNames}`;
+            col.appendChild(title);
+
+            const metaLine = document.createElement("div");
+            metaLine.className = "meta-line";
+            metaLine.textContent = `${it.origin || "当前网站"} · ${fmtTs(it.ts)}`;
+            col.appendChild(metaLine);
+
+            li.append(tag, col);
+            listEl.appendChild(li);
+        }
+    }
+
+    async function refreshEvents() {
+        const resp = await sendRuntimeMessage({ type: "vigil_recent_findings" });
+        renderFindings((resp && resp.findings) || []);
+    }
+
+    async function refreshModeLabel() {
+        const resp = await sendRuntimeMessage({ type: "vigil_get_mode" });
+        const mode = resp && resp.mode === "enterprise" ? "enterprise" : "consumer";
+        if (mode === "enterprise") {
+            setHeaderStatus("企业保护", "ok");
+        }
+    }
+
+    async function refreshCurrentPage() {
+        const tab = await queryActiveTab();
+        const url = tab && typeof tab.url === "string" ? tab.url : "";
+        let parsed = null;
+        try {
+            parsed = new URL(url);
+        } catch {
+            parsed = null;
+        }
+
+        if (!parsed || !["http:", "https:"].includes(parsed.protocol)) {
+            currentPageSite = null;
+            setPageStatus(
+                "未保护",
+                "当前页面不是普通网页，Vigils 不会在这里读取输入内容。",
+                "muted",
+                false,
+            );
+            return;
+        }
+
+        currentPageSite = normalizeCustomSiteInput(parsed.hostname);
+        const pattern = currentPageSite && currentPageSite.ok
+            ? currentPageSite.pattern
+            : `${parsed.origin}/*`;
+        const allowed = await permissionsContains(pattern);
+        if (allowed) {
+            setPageStatus(
+                "已保护",
+                `${parsed.hostname} 的复制、粘贴和发送会被本地检查。`,
+                "ok",
+                false,
+            );
+            return;
+        }
+
+        setPageStatus(
+            "需要授权",
+            `${parsed.hostname} 尚未加入保护范围。`,
+            "warn",
+            Boolean(currentPageSite && currentPageSite.ok),
+        );
+    }
+
+    async function protectCurrentSite() {
+        if (!currentPageSite || !currentPageSite.ok) return;
+        protectCurrentBtn.disabled = true;
+        try {
+            const permission = await requestOriginPermission(currentPageSite.pattern);
+            if (!permission.granted) {
+                setPageStatus("需要授权", "你取消了该网站权限请求。", "warn", true);
+                return;
+            }
+            const added = await sendRuntimeMessage({
+                type: "vigil_add_custom_site",
+                site: currentPageSite,
+            });
+            if (!added || !added.ok) {
+                setPageStatus("需要授权", "权限已授权，但保存保护网站失败。", "warn", true);
+                return;
+            }
+            setPageStatus(
+                "已保护",
+                `${currentPageSite.host} 已加入保护范围。刷新页面后生效。`,
+                "ok",
+                false,
+            );
+        } finally {
+            protectCurrentBtn.disabled = false;
+        }
+    }
+
+    function refreshOnboarding() {
+        chrome.storage.local.get([ONBOARDING_KEY], (got) => {
+            if (chrome.runtime.lastError) return;
+            onboardingCard.classList.toggle("hidden", Boolean(got && got[ONBOARDING_KEY]));
+        });
+    }
+
+    onboardingDoneBtn.addEventListener("click", () => {
+        chrome.storage.local.set({ [ONBOARDING_KEY]: true }, () => {
+            onboardingCard.classList.add("hidden");
+        });
+    });
+
+    clearBtn.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "vigil_clear_findings" }, () => {
+            refreshEvents();
+        });
+    });
+
+    protectCurrentBtn.addEventListener("click", protectCurrentSite);
+
+    optionsLink.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        if (chrome.runtime.openOptionsPage) {
+            chrome.runtime.openOptionsPage();
+        }
+    });
+
     (() => {
-        setHeaderStatus("保护中", "ok");
-        refresh();
-        refreshMode();
+        setHeaderStatus("检查中", "muted");
+        refreshOnboarding();
+        refreshEvents();
+        refreshCurrentPage();
+        refreshModeLabel();
     })();
 
-    // popup 是短命 document,不需要 MutationObserver;但偶尔用户让 popup 开着时
-    // 手动触发一次再渲染无害 —— 2s 一次轻量 refresh(同步 findings + mode)
     setInterval(() => {
-        refresh();
-        refreshMode();
+        refreshEvents();
+        refreshCurrentPage();
     }, 2000);
 })();

@@ -81,3 +81,36 @@ test("options no longer exposes tier settings", () => {
     assert.doesNotMatch(optionsSource, /vigil_set_tier/);
     assert.doesNotMatch(optionsSource, /vigilTier/);
 });
+
+test("popup is centered on ordinary user page protection status", () => {
+    const html = read("extensions/chrome-mv3/popup.html");
+    const js = read("extensions/chrome-mv3/popup.js");
+    const source = [html, js].join("\n");
+    assert.match(html, /当前页面/);
+    assert.match(html, /保护当前网站/);
+    assert.match(html, /开始使用/);
+    assert.match(js, /chrome\.tabs\.query/);
+    assert.match(js, /normalizeCustomSiteInput/);
+    assert.match(js, /vigil_add_custom_site/);
+    assert.doesNotMatch(html, /刷新/);
+});
+
+test("popup renders safety events in plain language", () => {
+    const js = read("extensions/chrome-mv3/popup.js");
+    assert.match(js, /eventKindLabel/);
+    assert.match(js, /actionLabel/);
+    assert.match(js, /findingLabel/);
+    assert.match(js, /已建议脱敏/);
+    assert.doesNotMatch(js, /toUpperCase\(\)/);
+});
+
+test("options defaults to consumer settings and hides enterprise diagnostics as advanced", () => {
+    const html = read("extensions/chrome-mv3/options.html");
+    assert.match(html, /推荐保护/);
+    assert.match(html, /已保护网站/);
+    assert.match(html, /隐私说明/);
+    assert.match(html, /高级设置/);
+    assert.match(html, /<details[^>]*id="advanced-settings"/);
+    assert.doesNotMatch(html, /<section[^>]*>\s*<h2>企业连接<\/h2>/);
+    assert.doesNotMatch(html, /<section[^>]*>\s*<h2>扩展 ID<\/h2>/);
+});

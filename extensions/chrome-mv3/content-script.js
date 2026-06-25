@@ -142,11 +142,15 @@
     }
 
     let riskPromptEl = null;
+    let riskPromptTarget = null;
+    let riskPromptArrowEl = null;
     function closeRiskPrompt() {
         if (riskPromptEl) {
             riskPromptEl.remove();
             riskPromptEl = null;
         }
+        riskPromptTarget = null;
+        riskPromptArrowEl = null;
     }
 
     function findingLabel(finding) {
@@ -168,7 +172,99 @@
         return labels[kind] || String(kind || "未知风险");
     }
 
-    function mountPromptBase(title, findings) {
+    function primaryFindingLabel(findings) {
+        const first = findings && findings.length > 0 ? findings[0] : null;
+        return findingLabel(first || "风险内容");
+    }
+
+    function clampNumber(value, min, max) {
+        return Math.max(min, Math.min(value, max));
+    }
+
+    function positionRiskPrompt() {
+        if (!riskPromptEl) return;
+        const margin = 16;
+        const gap = 12;
+        const promptWidth = Math.min(
+            riskPromptEl.offsetWidth || 320,
+            window.innerWidth - margin * 2,
+        );
+        const promptHeight = riskPromptEl.offsetHeight || 156;
+
+        riskPromptEl.style.right = "auto";
+        riskPromptEl.style.bottom = "auto";
+
+        let left = window.innerWidth - promptWidth - margin;
+        let top = window.innerHeight - promptHeight - margin;
+        let placement = "fallback";
+
+        if (riskPromptTarget) {
+            const rect = riskPromptTarget.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                const fitsRight =
+                    rect.right + gap + promptWidth <= window.innerWidth - margin;
+                const fitsAbove = rect.top - gap - promptHeight >= margin;
+                const fitsBelow =
+                    rect.bottom + gap + promptHeight <= window.innerHeight - margin;
+
+                if (fitsRight) {
+                    placement = "right";
+                    left = rect.right + gap;
+                    top = rect.top + rect.height / 2 - promptHeight / 2;
+                } else if (fitsAbove) {
+                    placement = "above";
+                    left = rect.left + rect.width / 2 - promptWidth / 2;
+                    top = rect.top - promptHeight - gap;
+                } else if (fitsBelow) {
+                    placement = "below";
+                    left = rect.left + rect.width / 2 - promptWidth / 2;
+                    top = rect.bottom + gap;
+                }
+            }
+        }
+
+        left = clampNumber(left, margin, window.innerWidth - promptWidth - margin);
+        top = clampNumber(top, margin, window.innerHeight - promptHeight - margin);
+        riskPromptEl.style.left = `${left}px`;
+        riskPromptEl.style.top = `${top}px`;
+        riskPromptEl.setAttribute("data-vigil-placement", placement);
+
+        if (riskPromptArrowEl) {
+            Object.assign(riskPromptArrowEl.style, {
+                display: placement === "fallback" ? "none" : "block",
+                left: "auto",
+                right: "auto",
+                top: "auto",
+                bottom: "auto",
+                transform: "rotate(45deg)",
+                border: "0",
+            });
+            if (placement === "right") {
+                Object.assign(riskPromptArrowEl.style, {
+                    left: "-6px",
+                    top: "calc(50% - 6px)",
+                    borderLeft: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderBottom: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            } else if (placement === "above") {
+                Object.assign(riskPromptArrowEl.style, {
+                    bottom: "-6px",
+                    left: "calc(50% - 6px)",
+                    borderRight: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderBottom: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            } else if (placement === "below") {
+                Object.assign(riskPromptArrowEl.style, {
+                    top: "-6px",
+                    left: "calc(50% - 6px)",
+                    borderLeft: "1px solid rgba(245, 158, 11, 0.24)",
+                    borderTop: "1px solid rgba(245, 158, 11, 0.24)",
+                });
+            }
+        }
+    }
+
+    function mountPromptBase(title, findings, anchor) {
         closeSafePrompt();
         closeRiskPrompt();
         const parent = document.body || document.documentElement;
@@ -183,32 +279,45 @@
             right: "16px",
             bottom: "16px",
             zIndex: "2147483647",
-            width: "min(380px, calc(100vw - 32px))",
-            padding: "14px",
-            borderRadius: "8px",
+            width: "min(320px, calc(100vw - 32px))",
+            padding: "12px",
+            borderRadius: "10px",
             background: "#ffffff",
             color: "#111827",
-            boxShadow: "0 18px 48px rgba(15, 23, 42, 0.28)",
+            boxShadow: "0 16px 36px rgba(15, 23, 42, 0.18)",
             fontFamily: "system-ui, -apple-system, sans-serif",
             fontSize: "13px",
             lineHeight: "1.45",
-            border: "1px solid rgba(15, 23, 42, 0.12)",
+            border: "1px solid rgba(245, 158, 11, 0.24)",
+            boxSizing: "border-box",
         });
 
+        const arrow = document.createElement("div");
+        arrow.setAttribute("data-vigil-risk-arrow", "");
+        Object.assign(arrow.style, {
+            position: "absolute",
+            width: "12px",
+            height: "12px",
+            background: "#ffffff",
+            boxSizing: "border-box",
+        });
+        box.appendChild(arrow);
+
         const heading = document.createElement("div");
-        heading.style.fontWeight = "700";
-        heading.style.marginBottom = "8px";
+        heading.style.fontWeight = "750";
+        heading.style.marginBottom = "6px";
+        heading.style.fontSize = "13px";
         heading.textContent = title;
         box.appendChild(heading);
 
         const body = document.createElement("div");
-        body.textContent =
-            `检测到：${(findings || []).map(findingLabel).join("、") || "风险内容"}`;
+        body.style.color = "#374151";
+        body.textContent = "建议先脱敏再发送。";
         box.appendChild(body);
 
         const privacy = document.createElement("div");
         privacy.style.marginTop = "6px";
-        privacy.style.color = "#4b5563";
+        privacy.style.color = "#6b7280";
         privacy.textContent = "原文未离开你的浏览器。";
         box.appendChild(privacy);
 
@@ -221,6 +330,9 @@
 
         parent.appendChild(box);
         riskPromptEl = box;
+        riskPromptArrowEl = arrow;
+        riskPromptTarget = getInputFrameTarget(anchor) || anchor;
+        positionRiskPrompt();
         return actions;
     }
 
@@ -229,19 +341,22 @@
         btn.type = "button";
         btn.textContent = label;
         Object.assign(btn.style, {
-            border: "0",
-            borderRadius: "6px",
-            padding: "8px 10px",
+            border: "1px solid transparent",
+            borderRadius: "7px",
+            padding: "7px 10px",
             cursor: "pointer",
             fontWeight: "700",
-            color: "#ffffff",
-            background: tone === "primary" ? "#2563eb" : "#374151",
+            fontSize: "12px",
+            color: tone === "primary" ? "#111827" : "#374151",
+            background: tone === "primary" ? "#f59e0b" : "#f3f4f6",
+            borderColor: tone === "primary" ? "#d97706" : "#e5e7eb",
         });
         return btn;
     }
 
-    function showRiskPrompt(response, onRedact) {
-        const actions = mountPromptBase("Vigils 发现风险内容", response.findings || []);
+    function showRiskPrompt(response, anchor, onRedact) {
+        const findings = response.findings || [];
+        const actions = mountPromptBase(`检测到 ${primaryFindingLabel(findings)}`, findings, anchor);
         if (!actions) return;
         const redactBtn = promptButton("脱敏后继续", "primary");
         redactBtn.addEventListener("click", () => {
@@ -253,8 +368,9 @@
         actions.append(redactBtn, blockBtn);
     }
 
-    function showBlockPrompt(response) {
-        const actions = mountPromptBase("Vigils 已阻断高危内容", response.findings || []);
+    function showBlockPrompt(response, anchor) {
+        const findings = response.findings || [];
+        const actions = mountPromptBase(`已阻断 ${primaryFindingLabel(findings)}`, findings, anchor);
         if (!actions) return;
         const closeBtn = promptButton("关闭", "secondary");
         closeBtn.addEventListener("click", closeRiskPrompt);
@@ -635,11 +751,17 @@
         "scroll",
         () => {
             clearTimeout(promptRepositionTimer);
-            promptRepositionTimer = setTimeout(positionSafePrompt, 16);
+            promptRepositionTimer = setTimeout(() => {
+                positionSafePrompt();
+                positionRiskPrompt();
+            }, 16);
         },
         true,
     );
-    window.addEventListener("resize", positionSafePrompt);
+    window.addEventListener("resize", () => {
+        positionSafePrompt();
+        positionRiskPrompt();
+    });
 
     // ───────────────────────── SW 请求 ─────────────────────────
 
@@ -1085,7 +1207,7 @@
                 typeof resp.redacted_text === "string"
             ) {
                 const safeText = toDisplayRedactedText(resp.redacted_text);
-                showRiskPrompt(resp, () => {
+                showRiskPrompt(resp, target, () => {
                     const currentAdapter = adaptTarget(target);
                     if (!currentAdapter) return;
                     if (currentAdapter.getText() !== latestAgain) {
@@ -1100,7 +1222,7 @@
 
             writeFieldByExtension(target, latestAdapter, "");
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            showBlockPrompt(resp);
+            showBlockPrompt(resp, target);
         }, INPUT_DEBOUNCE_MS);
         inputChecks.set(target, next);
     }
@@ -1192,7 +1314,7 @@
                 resp.action === "confirm_redact" &&
                 typeof resp.redacted_text === "string"
             ) {
-                showRiskPrompt(resp, (redactedText) => {
+                showRiskPrompt(resp, target, (redactedText) => {
                     const currentAdapter = adaptTarget(target);
                     if (!currentAdapter) return;
                     if (pasteSnapshot && currentAdapter.getText() !== pasteSnapshot.text) {
@@ -1210,7 +1332,7 @@
                 return;
             }
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            showBlockPrompt(resp);
+            showBlockPrompt(resp, target);
         },
         true, // 捕获阶段,抢先拿到 event
     );
@@ -1325,7 +1447,7 @@
                 if (primaryInput) {
                     const ad = adaptTarget(primaryInput);
                     const originalText = ad ? ad.getText() : "";
-                    showRiskPrompt(resp, (redactedText) => {
+                    showRiskPrompt(resp, primaryInput, (redactedText) => {
                         if (primaryInput) {
                             const currentAdapter = adaptTarget(primaryInput);
                             if (!currentAdapter) return;
@@ -1353,7 +1475,7 @@
                 return;
             }
             if (primaryInput instanceof HTMLElement) setInputVigilState(primaryInput, "block");
-            showBlockPrompt(resp);
+            showBlockPrompt(resp, primaryInput);
         },
         true,
     );
@@ -1386,7 +1508,7 @@
             ) {
                 const ad = adaptTarget(target);
                 const originalText = ad ? ad.getText() : "";
-                showRiskPrompt(resp, (redactedText) => {
+                showRiskPrompt(resp, target, (redactedText) => {
                     const currentAdapter = adaptTarget(target);
                     if (!currentAdapter) return;
                     if (currentAdapter.getText() !== originalText) {
@@ -1406,7 +1528,7 @@
                 return;
             }
             if (target instanceof HTMLElement) setInputVigilState(target, "block");
-            showBlockPrompt(resp);
+            showBlockPrompt(resp, target);
         },
         true,
     );

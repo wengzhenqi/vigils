@@ -4,18 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Vigils</title>
-  <!--
-    I09b-α3 popup:展示最近 findings(origin / event_kind / action / findings)。
-    不拉原文(ADR §I-9.1),数据 in-memory 只活 SW 生命周期内。
-    CSP `script-src 'self'` 严格;所有 JS 在外链 popup.js,无 inline script。
-  -->
+  <!-- 普通用户版 popup:当前页面状态 + 安全事件摘要;不展示原文或开发者枚举。 -->
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
   <header>
     <div>
       <h1>Vigils</h1>
-      <span class="subtitle">paste/input/submit 保护</span>
+      <span class="subtitle">复制粘贴安全守门</span>
     </div>
     <span id="status-pill" class="status-pill" aria-label="保护状态">
       <span class="status-dot"></span>
@@ -23,36 +19,47 @@
     </span>
   </header>
 
-  <div class="mode-line">
-    <span>模式</span>
-    <strong id="mode-label">普通保护</strong>
-  </div>
+  <section id="onboarding-card" class="onboarding-card hidden">
+    <h2>开始使用</h2>
+    <ul>
+      <li>复制、粘贴或发送前自动检查 token 和密钥</li>
+      <li>普通保护在浏览器内完成，原文不会保存</li>
+      <li>发现风险时先提示脱敏，再由你确认</li>
+    </ul>
+    <button id="onboarding-done-btn" type="button" class="primary-btn">开始使用</button>
+  </section>
 
-  <section class="actions">
-    <div class="actions-main">
-      <div class="count-block">
-        <span class="count-title">最近记录</span>
-        <span id="count-label" class="count-label">0 条</span>
-      </div>
-      <button id="refresh-btn" type="button" title="刷新最近记录和当前状态">刷新</button>
-      <button id="clear-btn" type="button" title="清空 in-memory 最近记录">清空</button>
-      <a id="options-link" href="#" title="打开扩展选项页">选项</a>
-    </div>
+  <section class="page-card" aria-live="polite">
+    <span class="section-label">当前页面</span>
+    <strong id="page-status-title">正在检查</strong>
+    <p id="page-status-detail">Vigils 正在读取当前标签页状态。</p>
+    <button id="protect-current-btn" type="button" class="primary-btn hidden">保护当前网站</button>
   </section>
 
   <section id="findings-section" aria-live="polite">
+    <div class="section-head">
+      <div>
+        <span class="section-label">安全事件</span>
+        <strong id="count-label">最近 0 条</strong>
+      </div>
+      <button id="clear-btn" type="button" class="ghost-btn" title="清空最近安全事件">清空</button>
+    </div>
     <div id="empty-hint" class="empty-hint">
-      尚无记录 —— 触发 paste、input 或 submit 后即可看到。
+      暂无安全事件。检测到 token、密钥或连接串时会显示在这里。
     </div>
     <ul id="findings-list" class="findings-list hidden" role="list"></ul>
   </section>
 
+  <nav class="footer-nav">
+    <a id="options-link" href="#" title="打开扩展设置">设置</a>
+  </nav>
+
   <footer>
     <small>
-      普通模式在浏览器内检测;原文不写入 storage、console 或页面全局对象。
+      普通保护在浏览器内检测；原文不写入 storage、console 或页面全局对象。
     </small>
   </footer>
 
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

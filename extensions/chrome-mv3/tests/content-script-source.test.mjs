@@ -37,3 +37,12 @@ test("contenteditable confirm-redact continuation does not insert a line break",
         /showRiskPrompt\(resp,\s*\(redactedText\)\s*=>\s*\{[\s\S]{0,1200}?insertLineBreak/,
     );
 });
+
+test("risk prompt anchors to the active input when available", () => {
+    assert.match(source, /function positionRiskPrompt\(\)/);
+    assert.match(source, /riskPromptTarget\s*=\s*getInputFrameTarget\(anchor\)\s*\|\|\s*anchor/);
+    assert.match(source, /data-vigil-risk-arrow/);
+    assert.match(source, /showRiskPrompt\(resp,\s*target,\s*\(/);
+    assert.match(source, /showBlockPrompt\(resp,\s*target\)/);
+    assert.match(source, /showRiskPrompt\(resp,\s*primaryInput,\s*\(/);
+});
