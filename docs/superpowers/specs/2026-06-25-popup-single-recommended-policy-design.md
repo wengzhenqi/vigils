@@ -82,11 +82,11 @@ Options 继续用于配置模式和网站权限，但普通用户不再看到“
 
 ## 架构边界
 
-第一步可以隐藏或移除 UI 层的档位入口，并让后台默认固定推荐策略。
+实现已移除 UI 层的档位入口，并让后台固定走推荐策略。
 
-底层 `tier-decision.js` 可以先保留一小段兼容逻辑，用于处理已经存在的历史 `vigilTier` storage 值或未来企业模式复用。但普通用户路径不得提供修改 `vigilTier` 的 UI 或 runtime 入口。
+普通用户路径不再保留 `tier-decision.js`、`vigil_get_tier`、`vigil_set_tier` 或 `vigilTier` 的 runtime 支持。已有历史 `vigilTier` storage 值会被忽略，不影响当前推荐策略。
 
-如果实现时确认没有其他调用方依赖 `strict` / `recall-first`，可以进一步删除未使用的分支和对应测试，改成更直接的推荐策略函数。
+后续如果企业模式重新引入策略接口，应作为企业 provider / policy 的独立实现回归，而不是恢复普通 popup 的档位切换能力。
 
 ## 存储与迁移
 
