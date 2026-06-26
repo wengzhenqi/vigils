@@ -114,3 +114,19 @@ test("options defaults to consumer settings and hides enterprise diagnostics as 
     assert.doesNotMatch(html, /<section[^>]*>\s*<h2>企业连接<\/h2>/);
     assert.doesNotMatch(html, /<section[^>]*>\s*<h2>扩展 ID<\/h2>/);
 });
+
+test("options exposes custom risk types only inside advanced settings", () => {
+    const html = read("extensions/chrome-mv3/options.html");
+    const js = read("extensions/chrome-mv3/options.js");
+    const source = [html, js].join("\n");
+    assert.match(html, /自定义风险类型/);
+    assert.match(html, /custom-risk-form/);
+    assert.match(html, /前缀/);
+    assert.match(html, /最小长度/);
+    assert.match(html, /建议脱敏/);
+    assert.match(html, /直接阻断/);
+    assert.match(source, /vigil_list_custom_risk_rules/);
+    assert.match(source, /vigil_add_custom_risk_rule/);
+    assert.match(source, /vigil_remove_custom_risk_rule/);
+    assert.doesNotMatch(html, /正则表达式/);
+});

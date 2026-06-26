@@ -77,7 +77,7 @@ function metadataOnlyRequest(request, localResult) {
 }
 
 export async function checkWithScannerPipeline(request, options = {}) {
-    const consumerProvider = options.consumerProvider || createConsumerJsProvider();
+    const consumerProvider = options.consumerProvider || createConsumerJsProvider(options.consumer || {});
     const localResult = await consumerProvider.check(request);
 
     if (options.mode !== "enterprise") {

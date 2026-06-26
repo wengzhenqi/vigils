@@ -4,6 +4,7 @@ import {
     scanText,
     redactText,
     hasFindings,
+    normalizeCustomRiskRuleInput,
 } from "../redaction-rules.js";
 import { decideRisk } from "../risk-decision.js";
 
@@ -139,4 +140,62 @@ test("safe text is allowed", () => {
         findings: [],
         source: "consumer_js",
     });
+});
+
+test("custom prefix rules detect and redact user-defined risk types", () => {
+    const rules = [
+        normalizeCustomRiskRuleInput({
+            id: "corp-token",
+            name: "公司内部 Token",
+            prefix: "corp_",
+            minLength: 12,
+            action: "confirm_redact",
+            enabled: true,
+        }),
+    ];
+    const text = "token corp_abcdefghijklmnop";
+
+    const findings = scanText(text, rules);
+    const result = decideRisk({ request_id: REQUEST_ID, text }, findings, rules);
+
+    assert.deepEqual(findings.map((f) => f.kind), ["custom:corp-token"]);
+    assert.equal(findings[0].label, "公司内部 Token");
+    assert.equal(result.action, "confirm_redact");
+    assert.equal(result.redacted_text, "token [REDACTED 公司内部 Token]");
+});
+
+test("custom prefix rules can be configured as block-only", () => {
+    const rules = [
+        normalizeCustomRiskRuleInput({
+            id: "internal-root",
+            name: "内部 Root Key",
+            prefix: "root_",
+            minLength: 10,
+            action: "block",
+            enabled: true,
+        }),
+    ];
+
+    const findings = scanText("root_abcdefghijkl", rules);
+    const result = decideRisk(
+        { request_id: REQUEST_ID, text: "root_abcdefghijkl" },
+        findings,
+        rules,
+    );
+
+    assert.equal(findings[0].kind, "custom:internal-root");
+    assert.equal(findings[0].redactable, false);
+    assert.equal(result.action, "block");
+    assert.equal(result.error, "high_risk");
+});
+
+test("custom risk rule normalization rejects unsafe broad rules", () => {
+    assert.deepEqual(
+        normalizeCustomRiskRuleInput({ name: "bad", prefix: "", minLength: 12 }),
+        { ok: false, error: "prefix_required" },
+    );
+    assert.deepEqual(
+        normalizeCustomRiskRuleInput({ name: "bad", prefix: "x", minLength: 2 }),
+        { ok: false, error: "min_length_range" },
+    );
 });

@@ -154,6 +154,9 @@
     }
 
     function findingLabel(finding) {
+        if (finding && typeof finding === "object" && typeof finding.label === "string") {
+            return finding.label;
+        }
         const kind = typeof finding === "string" ? finding : finding && finding.kind;
         const labels = {
             openai_api_key: "OpenAI API key",
@@ -1066,6 +1069,10 @@
     }
 
     function formatFindingLabel(kind) {
+        if (kind && typeof kind === "object" && typeof kind.label === "string") {
+            return kind.label;
+        }
+        kind = typeof kind === "string" ? kind : kind && kind.kind;
         const labels = {
             aws_access_key_id: "AWS Access Key",
             aws_access_key: "AWS Access Key",

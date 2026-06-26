@@ -37,6 +37,56 @@ test("consumer mode offers redaction confirmation for token assignments", async 
     assert.equal(result.redacted_text, "token=[REDACTED github_token]");
 });
 
+test("consumer mode applies custom risk rules", async () => {
+    const result = await checkWithScannerPipeline(
+        request("token corp_abcdefghijklmnop"),
+        {
+            mode: "consumer",
+            consumer: {
+                customRiskRules: [
+                    {
+                        id: "corp-token",
+                        name: "公司内部 Token",
+                        prefix: "corp_",
+                        minLength: 12,
+                        action: "confirm_redact",
+                        enabled: true,
+                    },
+                ],
+            },
+        },
+    );
+
+    assert.equal(result.action, "confirm_redact");
+    assert.deepEqual(result.findings.map((f) => f.kind), ["custom:corp-token"]);
+    assert.equal(result.findings[0].label, "公司内部 Token");
+    assert.equal(result.redacted_text, "token [REDACTED 公司内部 Token]");
+});
+
+test("consumer mode blocks custom rules marked as block", async () => {
+    const result = await checkWithScannerPipeline(
+        request("root_abcdefghijkl"),
+        {
+            mode: "consumer",
+            consumer: {
+                customRiskRules: [
+                    {
+                        id: "internal-root",
+                        name: "内部 Root Key",
+                        prefix: "root_",
+                        minLength: 10,
+                        action: "block",
+                        enabled: true,
+                    },
+                ],
+            },
+        },
+    );
+
+    assert.equal(result.action, "block");
+    assert.deepEqual(result.findings.map((f) => f.kind), ["custom:internal-root"]);
+});
+
 test("mergeScanResults keeps the strictest action", () => {
     const merged = mergeScanResults("rid", [
         { request_id: "rid", action: "allow", findings: [], source: "consumer_js" },

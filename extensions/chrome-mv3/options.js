@@ -1,4 +1,5 @@
 import { normalizeCustomSiteInput } from "./custom-sites.js";
+import { normalizeCustomRiskRuleInput } from "./redaction-rules.js";
 
 (() => {
     "use strict";
@@ -15,6 +16,16 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
     const modeInputs = Array.from(document.querySelectorAll("input[name='vigil-mode']"));
     const modeHint = document.getElementById("mode-hint");
     const enterpriseSection = document.getElementById("enterprise-section");
+    const customRiskForm = document.getElementById("custom-risk-form");
+    const customRiskName = document.getElementById("custom-risk-name");
+    const customRiskPrefix = document.getElementById("custom-risk-prefix");
+    const customRiskMinLength = document.getElementById("custom-risk-min-length");
+    const customRiskAction = document.getElementById("custom-risk-action");
+    const customRiskAddBtn = document.getElementById("custom-risk-add-btn");
+    const customRiskExampleFillBtn = document.getElementById("custom-risk-example-fill-btn");
+    const customRiskHint = document.getElementById("custom-risk-hint");
+    const customRiskList = document.getElementById("custom-risk-list");
+    const customRiskEmpty = document.getElementById("custom-risk-empty");
 
     const extId = chrome.runtime.id;
     idEl.textContent = extId || "(无法获取)";
@@ -114,6 +125,13 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         permission_missing: "站点权限未授权",
     };
 
+    const customRiskErrorLabels = {
+        name_required: "请输入类型名称",
+        prefix_required: "请输入前缀",
+        min_length_range: "最小长度需在 6 到 256 之间",
+        id_required: "规则 ID 无效",
+    };
+
     function flashCustomSiteHint(msg, tone /* "ok" | "warn" */) {
         customSiteHint.textContent = msg;
         customSiteHint.style.color = tone === "warn" ? "#b45309" : "#15803d";
@@ -126,6 +144,20 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
 
     function customSiteErrorMessage(code) {
         return customSiteErrorLabels[code] || String(code || "unknown");
+    }
+
+    function flashCustomRiskHint(msg, tone /* "ok" | "warn" */) {
+        customRiskHint.textContent = msg;
+        customRiskHint.style.color = tone === "warn" ? "#b45309" : "#15803d";
+        customRiskHint.classList.remove("fade");
+        clearTimeout(flashCustomRiskHint._t);
+        flashCustomRiskHint._t = setTimeout(() => {
+            customRiskHint.classList.add("fade");
+        }, 2200);
+    }
+
+    function customRiskErrorMessage(code) {
+        return customRiskErrorLabels[code] || String(code || "unknown");
     }
 
     function renderCustomSites(sites) {
@@ -181,6 +213,78 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
     async function refreshCustomSites() {
         const resp = await sendRuntimeMessage({ type: "vigil_list_custom_sites" });
         renderCustomSites(resp && resp.sites);
+    }
+
+    function renderCustomRiskRules(rules) {
+        customRiskList.replaceChildren();
+        const items = Array.isArray(rules) ? rules : [];
+        customRiskEmpty.classList.toggle("hidden", items.length !== 0);
+
+        for (const rule of items) {
+            const li = document.createElement("li");
+            li.className = "custom-risk-row";
+
+            const main = document.createElement("div");
+            main.className = "custom-risk-main";
+
+            const name = document.createElement("strong");
+            name.textContent = rule.name || "自定义类型";
+
+            const meta = document.createElement("span");
+            meta.textContent = `${rule.prefix || ""} + ${rule.minLength || 0} 位以上 · ${
+                rule.action === "block" ? "直接阻断" : "建议脱敏"
+            }`;
+            main.replaceChildren(name, meta);
+
+            const enabledLabel = document.createElement("label");
+            enabledLabel.className = "custom-risk-enabled";
+            const enabledInput = document.createElement("input");
+            enabledInput.type = "checkbox";
+            enabledInput.checked = rule.enabled !== false;
+            enabledInput.addEventListener("change", async () => {
+                enabledInput.disabled = true;
+                const resp = await sendRuntimeMessage({
+                    type: "vigil_set_custom_risk_rule_enabled",
+                    id: rule.id,
+                    enabled: enabledInput.checked,
+                });
+                if (!resp || !resp.ok) {
+                    flashCustomRiskHint(`更新失败:${customRiskErrorMessage(resp && resp._error)}`, "warn");
+                    enabledInput.checked = !enabledInput.checked;
+                } else {
+                    flashCustomRiskHint(enabledInput.checked ? "已启用" : "已停用");
+                }
+                enabledInput.disabled = false;
+            });
+            enabledLabel.append(enabledInput, "启用");
+
+            const removeBtn = document.createElement("button");
+            removeBtn.type = "button";
+            removeBtn.className = "custom-risk-remove";
+            removeBtn.textContent = "删除";
+            removeBtn.addEventListener("click", async () => {
+                removeBtn.disabled = true;
+                const resp = await sendRuntimeMessage({
+                    type: "vigil_remove_custom_risk_rule",
+                    id: rule.id,
+                });
+                if (!resp || !resp.ok) {
+                    flashCustomRiskHint(`删除失败:${customRiskErrorMessage(resp && resp._error)}`, "warn");
+                    removeBtn.disabled = false;
+                    return;
+                }
+                flashCustomRiskHint("已删除自定义风险类型");
+                await refreshCustomRiskRules();
+            });
+
+            li.replaceChildren(main, enabledLabel, removeBtn);
+            customRiskList.appendChild(li);
+        }
+    }
+
+    async function refreshCustomRiskRules() {
+        const resp = await sendRuntimeMessage({ type: "vigil_list_custom_risk_rules" });
+        renderCustomRiskRules(resp && resp.rules);
     }
 
     copyIdBtn.addEventListener("click", async () => {
@@ -250,6 +354,55 @@ import { normalizeCustomSiteInput } from "./custom-sites.js";
         }
     });
 
+    customRiskForm.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        customRiskAddBtn.disabled = true;
+        try {
+            const normalized = normalizeCustomRiskRuleInput({
+                name: customRiskName.value,
+                prefix: customRiskPrefix.value,
+                minLength: Number(customRiskMinLength.value),
+                action: customRiskAction.value,
+                enabled: true,
+            });
+            if (!normalized || !normalized.ok) {
+                flashCustomRiskHint(
+                    `添加失败:${customRiskErrorMessage(normalized && normalized.error)}`,
+                    "warn",
+                );
+                return;
+            }
+            const added = await sendRuntimeMessage({
+                type: "vigil_add_custom_risk_rule",
+                rule: normalized,
+            });
+            if (!added || !added.ok) {
+                flashCustomRiskHint(`保存失败:${customRiskErrorMessage(added && added._error)}`, "warn");
+                return;
+            }
+            customRiskName.value = "";
+            customRiskPrefix.value = "";
+            customRiskMinLength.value = "24";
+            customRiskAction.value = "confirm_redact";
+            flashCustomRiskHint(`已添加 ${normalized.name}`);
+            await refreshCustomRiskRules();
+        } finally {
+            customRiskAddBtn.disabled = false;
+        }
+    });
+
+    if (customRiskExampleFillBtn) {
+        customRiskExampleFillBtn.addEventListener("click", () => {
+            customRiskName.value = "公司内部 Token";
+            customRiskPrefix.value = "corp_";
+            customRiskMinLength.value = "12";
+            customRiskAction.value = "confirm_redact";
+            customRiskName.focus();
+            flashCustomRiskHint("已填入案例,确认后点击添加类型");
+        });
+    }
+
     refreshMode();
     refreshCustomSites();
+    refreshCustomRiskRules();
 })();

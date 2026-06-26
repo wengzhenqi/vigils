@@ -173,6 +173,117 @@
   font-size: 11px;
 }
 
+.custom-risk-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+}
+.custom-risk-example {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0 12px;
+  padding: 10px;
+  color: var(--muted);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+}
+.custom-risk-example-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.custom-risk-example strong {
+  color: var(--fg);
+  font-size: 12px;
+}
+.custom-risk-example p {
+  margin: 0;
+}
+.custom-risk-example code {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.custom-risk-form label {
+  margin: 0;
+}
+.custom-risk-form input,
+.custom-risk-form select {
+  min-width: 0;
+  padding: 7px 10px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  font: inherit;
+}
+.custom-risk-form input:focus,
+.custom-risk-form select:focus {
+  outline: 2px solid var(--accent-soft);
+  border-color: var(--accent);
+}
+#custom-risk-add-btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.custom-risk-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.custom-risk-list:empty {
+  display: none;
+}
+.custom-risk-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.custom-risk-row:last-child {
+  border-bottom: 0;
+}
+.custom-risk-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.custom-risk-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.custom-risk-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 11px;
+}
+.custom-risk-enabled {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.custom-risk-remove {
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
 .more {
   margin-top: 12px;
 }

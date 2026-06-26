@@ -1,6 +1,6 @@
 import { hasFindings, redactText } from "./redaction-rules.js";
 
-export function decideRisk(request, findings) {
+export function decideRisk(request, findings, customRules = []) {
     const requestId =
         request && typeof request.request_id === "string" ? request.request_id : "";
     const text = request && typeof request.text === "string" ? request.text : "";
@@ -26,8 +26,8 @@ export function decideRisk(request, findings) {
         };
     }
 
-    const redactedText = redactText(text, cleanFindings);
-    if (!redactedText || redactedText === text || hasFindings(redactedText)) {
+    const redactedText = redactText(text, cleanFindings, customRules);
+    if (!redactedText || redactedText === text || hasFindings(redactedText, customRules)) {
         return {
             request_id: requestId,
             action: "block",

@@ -87,6 +87,41 @@
       </div>
 
       <div class="advanced-block">
+        <h3>自定义风险类型</h3>
+        <p class="desc">适合内部 token 或团队约定的密钥前缀。第一版使用“前缀 + 最小长度”，避免普通用户误写复杂规则。</p>
+        <div class="custom-risk-example">
+          <div class="custom-risk-example-head">
+            <strong>案例</strong>
+            <button id="custom-risk-example-fill-btn" type="button" class="secondary-btn">使用这个案例</button>
+          </div>
+          <p>名称：公司内部 Token</p>
+          <p>前缀：<code>corp_</code>，最小长度：<code>12</code>，处理方式：建议脱敏</p>
+          <p>测试文本：<code>corp_abcdefghijklmnop</code></p>
+        </div>
+        <form id="custom-risk-form" class="custom-risk-form">
+          <label for="custom-risk-name">名称</label>
+          <input id="custom-risk-name" type="text" autocomplete="off" placeholder="公司内部 Token" maxlength="48" />
+
+          <label for="custom-risk-prefix">前缀</label>
+          <input id="custom-risk-prefix" type="text" autocomplete="off" spellcheck="false" placeholder="corp_" maxlength="64" />
+
+          <label for="custom-risk-min-length">最小长度</label>
+          <input id="custom-risk-min-length" type="number" min="6" max="256" value="24" />
+
+          <label for="custom-risk-action">处理方式</label>
+          <select id="custom-risk-action">
+            <option value="confirm_redact">建议脱敏</option>
+            <option value="block">直接阻断</option>
+          </select>
+
+          <button id="custom-risk-add-btn" type="submit">添加类型</button>
+        </form>
+        <p id="custom-risk-hint" class="copy-hint"></p>
+        <ul id="custom-risk-list" class="custom-risk-list"></ul>
+        <p id="custom-risk-empty" class="desc">尚未添加自定义风险类型。</p>
+      </div>
+
+      <div class="advanced-block">
         <h3>权限 / 守门清单</h3>
         <ul class="minimal-list">
           <li><code>storage</code> —— 仅保存自定义网站、模式和 UI 设置等元数据,不保存页面原文</li>

@@ -22,9 +22,11 @@
 
 import { normalizeCustomSiteInput } from "./custom-sites.js";
 import { checkWithScannerPipeline } from "./scanner-pipeline.js";
+import { normalizeCustomRiskRuleInput, normalizeCustomRiskRules } from "./redaction-rules.js";
 
 const MAX_TEXT_CHARS = 32 * 1024 * 1024; // 32 MB 字符早退,避免超大文本拖垮 SW 消息处理
 const CUSTOM_SITES_STORAGE_KEY = "customProtectedSites";
+const CUSTOM_RISK_RULES_STORAGE_KEY = "customRiskRules";
 const CUSTOM_CONTENT_SCRIPT_ID = "vigil-custom-protected-sites";
 const MODE_STORAGE_KEY = "vigilMode";
 const MODE_VALUES = Object.freeze(["consumer", "enterprise"]);
@@ -87,6 +89,15 @@ async function loadCustomSites() {
 
 async function saveCustomSites(sites) {
     await storageSet({ [CUSTOM_SITES_STORAGE_KEY]: sites });
+}
+
+async function loadCustomRiskRules() {
+    const got = await storageGet({ [CUSTOM_RISK_RULES_STORAGE_KEY]: [] });
+    return normalizeCustomRiskRules(got[CUSTOM_RISK_RULES_STORAGE_KEY]);
+}
+
+async function saveCustomRiskRules(rules) {
+    await storageSet({ [CUSTOM_RISK_RULES_STORAGE_KEY]: normalizeCustomRiskRules(rules) });
 }
 
 function permissionsContains(origins) {
@@ -337,6 +348,34 @@ async function removeCustomSite(input) {
     return { ok: true };
 }
 
+async function addCustomRiskRule(input) {
+    const normalized = normalizeCustomRiskRuleInput(input);
+    if (!normalized.ok) return { ok: false, _error: normalized.error };
+    const rules = await loadCustomRiskRules();
+    const next = rules.filter((rule) => rule.id !== normalized.id).concat([normalized]);
+    await saveCustomRiskRules(next);
+    return { ok: true, rule: normalized };
+}
+
+async function removeCustomRiskRule(id) {
+    const targetId = typeof id === "string" ? id : "";
+    if (!targetId) return { ok: false, _error: "id_required" };
+    const rules = await loadCustomRiskRules();
+    await saveCustomRiskRules(rules.filter((rule) => rule.id !== targetId));
+    return { ok: true };
+}
+
+async function setCustomRiskRuleEnabled(id, enabled) {
+    const targetId = typeof id === "string" ? id : "";
+    if (!targetId) return { ok: false, _error: "id_required" };
+    const rules = await loadCustomRiskRules();
+    const next = rules.map((rule) =>
+        rule.id === targetId ? { ...rule, enabled: enabled !== false } : rule,
+    );
+    await saveCustomRiskRules(next);
+    return { ok: true };
+}
+
 // α3:popup 展示用的最近 findings 环形队列(in-memory,SW 生命周期内有效)。
 // findings 不落 chrome.storage,不记原文(ADR §I-9.1);
 // storage 权限仅用于自定义保护网站 host/pattern 元数据。
@@ -379,7 +418,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     });
                     return null;
                 }
-                return checkWithScannerPipeline(
+                return loadCustomRiskRules().then((customRiskRules) => checkWithScannerPipeline(
                     {
                         request_id: crypto.randomUUID(),
                         origin: msg.origin,
@@ -388,9 +427,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     },
                     {
                         mode: currentMode,
+                        consumer: { customRiskRules },
                         enterprise: { dataPolicy: "local_only" },
                     },
-                )
+                ))
                     .then((resp) => {
                         recordFinding({
                             ts: Date.now(),
@@ -398,7 +438,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                             event_kind: msg.event_kind || "?",
                             action: resp.action,
                             findings: (resp.findings || []).map((finding) =>
-                                typeof finding === "string" ? finding : finding.kind,
+                                typeof finding === "string" ? finding : finding.label || finding.kind,
                             ),
                         });
                         sendResponse(resp);
@@ -432,6 +472,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     if (msg.type === "vigil_remove_custom_site") {
         removeCustomSite(msg.input)
+            .then(sendResponse)
+            .catch((err) => sendResponse({ ok: false, _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_list_custom_risk_rules") {
+        loadCustomRiskRules()
+            .then((rules) => sendResponse({ rules }))
+            .catch((err) => sendResponse({ rules: [], _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_add_custom_risk_rule") {
+        addCustomRiskRule(msg.rule)
+            .then(sendResponse)
+            .catch((err) => sendResponse({ ok: false, _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_remove_custom_risk_rule") {
+        removeCustomRiskRule(msg.id)
+            .then(sendResponse)
+            .catch((err) => sendResponse({ ok: false, _error: String(err) }));
+        return true;
+    }
+
+    if (msg.type === "vigil_set_custom_risk_rule_enabled") {
+        setCustomRiskRuleEnabled(msg.id, msg.enabled)
             .then(sendResponse)
             .catch((err) => sendResponse({ ok: false, _error: String(err) }));
         return true;
